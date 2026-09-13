@@ -3,7 +3,7 @@
 Run the clone-discovery regression checks with:
 
 ```sh
-node --test scripts/tests/clone-mine.test.mjs
+node --test scripts/tests/clone-mine.test.mjs scripts/tests/clone-all.test.mjs
 ```
 
 The tests use generated workspace identity configuration plus fake GitHub
