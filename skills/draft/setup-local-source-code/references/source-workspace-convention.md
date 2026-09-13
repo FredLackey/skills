@@ -49,6 +49,9 @@ The setup installs dependency-free executable Node.js tools:
 - `wt-prune.mjs` reports stale worktree directories and removes them only with
   its explicit force option.
 - `wt-open.mjs {client} {ticket}` opens the entire ticket folder in VS Code.
+- `clone-all.mjs [--profile {name}]` clones every repository in organizations
+  routed to configured GitHub profiles without inspecting repository history or
+  contents.
 - `clone-mine.mjs` discovers repositories with commits authored by configured
   GitHub profiles and clones them using the correct routed identity.
 

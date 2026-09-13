@@ -113,13 +113,16 @@ GitHub commands as a substitute.
 
 After setup:
 
-- Run each installed `wt-*.mjs` command with `--help`.
+- Run each installed `wt-*.mjs` command and both clone commands with `--help`.
 - Confirm each GitHub account has the selected key registered for both SSH
   authentication and SSH signing.
 - Confirm every primary clone has its routed author name/email and key, uses
   `gpg.format=ssh`, and requires signed commits and tags.
 - Run `clone-mine.mjs --dry-run` only when the user wants repository discovery;
   it can make many read-only GitHub API requests.
+- Run `clone-all.mjs --dry-run` only when the user wants a complete repository
+  inventory; it can make many read-only GitHub API requests. Run it without
+  `--dry-run` only when the user explicitly asks to clone every repository.
 - Confirm the generated identity routes match the discovered GitHub logins and
   organizations, and every suggested value the user confirmed.
 - Confirm generated files contain the user's supplied information and no

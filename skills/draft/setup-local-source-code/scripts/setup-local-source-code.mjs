@@ -10,6 +10,7 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SKILL_DIR = path.dirname(SCRIPT_DIR);
 const ASSET_DIR = path.join(SKILL_DIR, 'assets', 'workspace-scripts');
 const MANAGED_FILES = [
+  ['clone-all.mjs', 0o755],
   ['clone-mine.mjs', 0o755],
   ['wt-create.mjs', 0o755],
   ['wt-enforce-signing.mjs', 0o755],
@@ -20,6 +21,7 @@ const MANAGED_FILES = [
   ['wt-status.mjs', 0o755],
   ['wt-sync.mjs', 0o755],
   [path.join('lib', 'wt-lib.mjs'), 0o644],
+  [path.join('tests', 'clone-all.test.mjs'), 0o644],
   [path.join('tests', 'clone-mine.test.mjs'), 0o644],
   [path.join('tests', 'README.md'), 0o644],
 ];
@@ -216,6 +218,7 @@ function generatedGuide(config) {
     `- \`wt-list.mjs\` and \`wt-status.mjs\`: inspect task worktrees.\n` +
     `- \`wt-remove.mjs\` and \`wt-prune.mjs\`: safely clean up worktrees.\n` +
     `- \`wt-open.mjs {client} {ticket}\`: open a ticket folder in VS Code.\n` +
+    `- \`clone-all.mjs [--profile {name}]\`: clone every repository in organizations routed to configured GitHub profiles.\n` +
     `- \`clone-mine.mjs\`: discover and clone repositories associated with configured accounts.\n\n` +
     `## GitHub identities\n\n${routes}\n\n` +
     `Routes are case-insensitive and exact-match only, discovered from each identity's own ` +
