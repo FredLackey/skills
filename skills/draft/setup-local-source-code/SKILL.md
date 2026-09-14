@@ -114,6 +114,8 @@ GitHub commands as a substitute.
 After setup:
 
 - Run each installed `wt-*.mjs` command and both clone commands with `--help`.
+- Confirm `wt-pr-create.mjs --dry-run` can validate a prepared ticket without
+  authenticating, pushing branches, or creating pull requests.
 - Confirm each GitHub account has the selected key registered for both SSH
   authentication and SSH signing.
 - Confirm every primary clone has its routed author name/email and key, uses
