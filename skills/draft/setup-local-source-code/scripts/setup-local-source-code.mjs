@@ -16,6 +16,7 @@ const MANAGED_FILES = [
   ['wt-enforce-signing.mjs', 0o755],
   ['wt-list.mjs', 0o755],
   ['wt-open.mjs', 0o755],
+  ['wt-pr-create.mjs', 0o755],
   ['wt-prune.mjs', 0o755],
   ['wt-remove.mjs', 0o755],
   ['wt-status.mjs', 0o755],
@@ -23,6 +24,7 @@ const MANAGED_FILES = [
   [path.join('lib', 'wt-lib.mjs'), 0o644],
   [path.join('tests', 'clone-all.test.mjs'), 0o644],
   [path.join('tests', 'clone-mine.test.mjs'), 0o644],
+  [path.join('tests', 'wt-pr-create.test.mjs'), 0o644],
   [path.join('tests', 'README.md'), 0o644],
 ];
 
@@ -216,6 +218,7 @@ function generatedGuide(config) {
     `- \`wt-enforce-signing.mjs\`: audit or repair identity and SSH signing in every primary clone.\n` +
     `- \`wt-sync.mjs {org}/{repo}\`: fast-forward a clean primary clone.\n` +
     `- \`wt-list.mjs\` and \`wt-status.mjs\`: inspect task worktrees.\n` +
+    `- \`wt-pr-create.mjs {client} {ticket} {base-branch} --body-file {path}\`: push each ticket branch and create or find its GitHub PR using file-backed bodies; use \`--help\` for per-repo body files.\n` +
     `- \`wt-remove.mjs\` and \`wt-prune.mjs\`: safely clean up worktrees.\n` +
     `- \`wt-open.mjs {client} {ticket}\`: open a ticket folder in VS Code.\n` +
     `- \`clone-all.mjs [--profile {name}]\`: clone every repository in organizations routed to configured GitHub profiles.\n` +
