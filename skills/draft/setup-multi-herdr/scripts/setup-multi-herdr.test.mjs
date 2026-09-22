@@ -1,3 +1,4 @@
+// Hostnames, usernames, addresses, and machine identifiers below are synthetic fixtures.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
