@@ -9,6 +9,9 @@ plan using Herdr's native multi-machine support.
 The skill does not run automatically. It must be invoked by name, and works
 with any AI coding agent that supports invoking named skills.
 
+All account names, hostnames, and network ranges in the examples are fictional.
+Replace them with values appropriate to your own environment.
+
 ## What it accomplishes
 
 The skill can:
@@ -158,7 +161,7 @@ skill folder:
 scripts/setup-multi-herdr.mjs discover --json
 scripts/setup-multi-herdr.mjs discover --target workbox --interface en0
 scripts/setup-multi-herdr.mjs discover --cidr 192.168.50.0/24
-scripts/setup-multi-herdr.mjs doctor --target fred@workbox --json
+scripts/setup-multi-herdr.mjs doctor --target operator@workbox --json
 scripts/setup-multi-herdr.mjs doctor --host --json
 ```
 
