@@ -22,3 +22,19 @@ local-only projects, durable research, and dependency-free Node.js tools.
 standard and its existing worktree-management scripts. Its generated identity
 routing, GitHub CLI onboarding, dual-use SSH key registration, and locally
 enforced signing behavior are being validated before canary promotion.
+
+## `setup-multi-herdr`
+
+Discovers Herdr-capable machines across Tailscale and directly connected local
+networks, reports causal SSH/Herdr issues, offers separately approved Linux and
+macOS repairs, correlates alternate routes to the same logical host, and
+configures Herdr's native multi-machine SSH profiles through a digest-bound
+plan.
+
+See the [human guide](setup-multi-herdr/docs/README.md) for capabilities,
+requirements, safety boundaries, and usage examples.
+
+**Current state:** Explicit-only draft based on Herdr 0.9's saved-machine CLI.
+Its prerequisite-first discovery, destination-user-safe probing, causal
+diagnostics, one-action resolver, target-local doctor, privacy controls, and
+interactive apply workflow are being validated before canary promotion.
