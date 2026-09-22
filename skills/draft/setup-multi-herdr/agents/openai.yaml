@@ -1,0 +1,7 @@
+interface:
+  display_name: "Setup Multi-Herdr"
+  short_description: "Configure Herdr across local and SSH nodes"
+  default_prompt: "Use $setup-multi-herdr to discover and configure my Herdr machines."
+
+policy:
+  allow_implicit_invocation: false
