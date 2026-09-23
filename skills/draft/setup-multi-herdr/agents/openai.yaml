@@ -1,0 +1,7 @@
+interface:
+  display_name: "Setup Multi-Herdr"
+  short_description: "Discover, plan, and bond Herdr machines"
+  default_prompt: "Use $setup-multi-herdr to discover my Herdr machines, propose one complete plan, and after one confirmation bootstrap SSH/Tailscale access, install or update remote Herdr, and bond every machine headlessly."
+
+policy:
+  allow_implicit_invocation: false
