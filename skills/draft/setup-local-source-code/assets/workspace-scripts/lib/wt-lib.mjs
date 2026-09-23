@@ -10,7 +10,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { sourceRoot } from './wt-config.mjs';
+import * as workspaceConfig from './wt-config.mjs';
 
 // ---------------------------------------------------------------------------
 // Directory layout
@@ -25,7 +25,7 @@ export function expandHome(inputPath) {
   return inputPath;
 }
 
-export const SOURCE_ROOT = expandHome(sourceRoot);
+export const SOURCE_ROOT = expandHome(workspaceConfig.sourceRoot ?? '~/Source');
 export const REPOS_ROOT = path.join(SOURCE_ROOT, 'repos');
 export const TREES_ROOT = path.join(SOURCE_ROOT, 'trees');
 export const SCRIPTS_ROOT = path.join(SOURCE_ROOT, 'scripts');
@@ -110,20 +110,21 @@ export function parseOrgRepo(spec, label = 'org/repo argument') {
 export function repoPath(org, repo) {
   assertSafeSegment(org, 'org');
   assertSafeSegment(repo, 'repo');
-  return path.join(REPOS_ROOT, org, repo);
+  return resolvePrimaryPath(org, repo);
 }
 
 /** Builds a ticket folder's path, validating both segments. */
 export function ticketPath(clientOrProject, ticketIdOrSlug) {
   assertSafeSegment(clientOrProject, 'client-or-project');
   assertSafeSegment(ticketIdOrSlug, 'ticket-id-or-slug');
-  return path.join(TREES_ROOT, clientOrProject, ticketIdOrSlug);
+  const client = uniqueDirectory(TREES_ROOT, clientOrProject.toLowerCase());
+  return uniqueDirectory(client, ticketIdOrSlug, { exact: true });
 }
 
 /** Builds a single repo worktree's path, validating all three segments. */
 export function worktreePath(clientOrProject, ticketIdOrSlug, repo) {
   assertSafeSegment(repo, 'repo');
-  return path.join(ticketPath(clientOrProject, ticketIdOrSlug), repo);
+  return uniqueDirectory(ticketPath(clientOrProject, ticketIdOrSlug), repo);
 }
 
 // ---------------------------------------------------------------------------
@@ -396,4 +397,141 @@ export function isEmptyDir(dir) {
 export function commandExists(cmd) {
   const locator = process.platform === 'win32' ? 'where' : 'which';
   return runCmdOrNull(locator, [cmd]) !== null;
+}
+
+/** Compare filesystem names as GitHub identities, without changing display spelling. */
+export const sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
+
+function matchingEntries(parent, name) {
+  if (!fs.existsSync(parent)) return [];
+  return fs.readdirSync(parent).filter(entry => sameName(entry, name)).map(entry => path.join(parent, entry));
+}
+
+function uniqueDirectory(parent, name, { exact = false } = {}) {
+  assertSafeSegment(name, 'path segment');
+  const matches = matchingEntries(parent, name);
+  if (matches.length > 1) throw new Error(`Case collision; reconcile these paths before continuing:\n${matches.join('\n')}`);
+  if (!matches.length) return path.join(parent, name);
+  const selected = matches[0];
+  if (!fs.lstatSync(selected).isDirectory()) throw new Error(`Expected a real directory (not a file or symlink): ${selected}`);
+  if (exact && path.basename(selected) !== name) {
+    throw new Error(`Ticket/branch case mismatch: use ${path.basename(selected)} exactly (${selected}).`);
+  }
+  return selected;
+}
+
+export function validatePrimary(repoDir, org, repo) {
+  const identity = workspaceConfig.resolveIdentity(org);
+  const url = git(['remote', 'get-url', 'origin'], { cwd: repoDir });
+  const expected = `git@${identity.sshHost}:${org}/${repo}.git`;
+  const normalized = value => value.replace(/^ssh:\/\/git@([^/]+)\//, 'git@$1:').replace(/\.git$/, '').toLowerCase();
+  if (normalized(url) !== normalized(expected)) throw new Error(`Unexpected origin at ${repoDir}: ${url}; expected ${expected}`);
+  const root = git(['rev-parse', '--show-toplevel'], { cwd: repoDir });
+  const common = getPrimaryRepoDirFromWorktree(repoDir);
+  if (fs.realpathSync(root) !== fs.realpathSync(repoDir) || !common || fs.realpathSync(common) !== fs.realpathSync(repoDir)) {
+    throw new Error(`Not a primary clone: ${repoDir}`);
+  }
+}
+
+/** Resolve a legacy path without network access; never prefer an exact match over ambiguity. */
+export function resolvePrimaryPath(org, repo) {
+  assertSafeSegment(org, 'org');
+  assertSafeSegment(repo, 'repo');
+  const ownerDir = uniqueDirectory(REPOS_ROOT, org);
+  const result = uniqueDirectory(ownerDir, repo);
+  if (fs.existsSync(result)) validatePrimary(result, org, repo);
+  return result;
+}
+
+/** A new clone must use names obtained through the routed GitHub identity. */
+export function canonicalRepository(org, repo, run = runCmd) {
+  const identity = workspaceConfig.resolveIdentity(org);
+  const env = { ...process.env, GH_PROMPT_DISABLED: '1' };
+  for (const key of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GH_HOST', 'GH_DEBUG']) delete env[key];
+  let token;
+  try { token = run('gh', ['auth', 'token', '--hostname', 'github.com', '--user', identity.ghUser], { env }); }
+  catch { throw new Error(`Cannot obtain stored token for ${identity.ghUser}.`); }
+  if (!token) throw new Error(`No stored token for ${identity.ghUser}.`);
+  const apiEnv = { ...env, GH_TOKEN: token };
+  try {
+    const actual = JSON.parse(run('gh', ['api', '--hostname', 'github.com', 'user'], { env: apiEnv }));
+    if (!sameName(actual.login, identity.ghUser)) throw new Error('GitHub token identity mismatch.');
+    const result = JSON.parse(run('gh', ['api', '--hostname', 'github.com', `repos/${org}/${repo}`], { env: apiEnv }));
+    const canonical = parseOrgRepo(result.full_name);
+    if (!sameName(org, canonical.org) || !sameName(repo, canonical.repo)) throw new Error(`Repository redirected to ${result.full_name}; review routing before retrying with that name.`);
+    return canonical;
+  } catch (error) { throw new Error(error.message.split(token).join('[REDACTED]')); }
+}
+
+/** One workspace lock covers both owner and ticket namespaces; competing creators retry. */
+export function withWorkspaceLock(action) {
+  fs.mkdirSync(SOURCE_ROOT, { recursive: true });
+  const lock = path.join(SOURCE_ROOT, '.wt-create.lock');
+  try { fs.mkdirSync(lock); }
+  catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    throw new Error(`Workspace creation is locked: ${lock}. Retry after the other command finishes; if it crashed, verify no creator is running before removing this lock.`);
+  }
+  try {
+    fs.writeFileSync(path.join(lock, 'owner.json'), JSON.stringify({ pid: process.pid, started: new Date().toISOString() }));
+    return action();
+  } finally { fs.rmSync(lock, { recursive: true }); }
+}
+
+export function validateWorktree(worktreeDir, repoDir, branch) {
+  const root = git(['rev-parse', '--show-toplevel'], { cwd: worktreeDir });
+  const common = getPrimaryRepoDirFromWorktree(worktreeDir);
+  if (fs.realpathSync(root) !== fs.realpathSync(worktreeDir) || !common ||
+      fs.realpathSync(common) !== fs.realpathSync(repoDir) ||
+      getCurrentBranch(worktreeDir) !== branch ||
+      !getRegisteredWorktreePaths(repoDir).has(path.resolve(worktreeDir))) {
+    throw new Error(`Existing path is not the requested registered worktree on branch ${branch}: ${worktreeDir}`);
+  }
+}
+
+export function assertBranchCase(repoDir, branch) {
+  git(['check-ref-format', '--branch', branch], { cwd: repoDir });
+  const refs = git(['for-each-ref', '--format=%(refname:strip=2)', 'refs/heads'], { cwd: repoDir }).split('\n');
+  const alternate = refs.find(name => sameName(name, branch) && name !== branch);
+  if (alternate) throw new Error(`Branch case collision: ${alternate} already exists; requested ${branch}.`);
+}
+
+/** Report every physical spelling, including split owners whose repositories differ. */
+export function caseCollisions() {
+  const issues = [];
+  function inspect(parent, depth) {
+    if (!fs.existsSync(parent)) return;
+    const groups = new Map();
+    for (const entry of fs.readdirSync(parent, { withFileTypes: true })) {
+      const key = entry.name.toLowerCase();
+      const entries = groups.get(key) ?? [];
+      entries.push(path.join(parent, entry.name));
+      groups.set(key, entries);
+      if (depth > 1 && entry.isDirectory()) inspect(path.join(parent, entry.name), depth - 1);
+    }
+    for (const entries of groups.values()) if (entries.length > 1) issues.push(entries);
+  }
+  inspect(REPOS_ROOT, 2);
+  inspect(TREES_ROOT, 3);
+  return issues;
+}
+
+export function assertNoCaseCollisions() {
+  const issues = caseCollisions();
+  if (issues.length) throw new Error(`Case collisions require reconciliation:\n${issues.map(group => group.join('\n')).join('\n\n')}`);
+}
+
+export function reportCaseCollisions() {
+  for (const group of caseCollisions()) console.error(`Case collision:\n${group.join('\n')}`);
+}
+
+/** Validate primary ownership through metadata before a worktree mutation. */
+export function validateManagedWorktree(worktreeDir) {
+  const primary = getPrimaryRepoDirFromWorktree(worktreeDir);
+  if (!primary) throw new Error(`Not a managed worktree: ${worktreeDir}`);
+  const parts = path.relative(REPOS_ROOT, primary).split(path.sep);
+  if (parts.length !== 2 || parts.includes('..')) throw new Error(`Primary outside managed repos: ${primary}`);
+  const resolved = repoPath(...parts);
+  validateWorktree(worktreeDir, resolved, path.basename(path.dirname(worktreeDir)));
+  return resolved;
 }

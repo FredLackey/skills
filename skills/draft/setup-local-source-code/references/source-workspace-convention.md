@@ -149,7 +149,25 @@ interview:
 }
 ```
 
-Identity IDs, client identifiers, organizations, and path segments use
-lowercase letters, digits, and hyphens. Organization matching is
-case-insensitive and exact only; an unmatched organization uses the default
-identity.
+Identity IDs use lowercase letters, digits, and hyphens. New client directories
+use lowercase names; existing unambiguous client directories are reused.
+GitHub owner and repository identity comparisons are case-insensitive. Use
+GitHub's returned spelling for new names, but reuse a sole existing owner or
+repository directory regardless of case. Multiple case-equivalent paths are
+an error, even when one exactly matches the argument. Run `wt-audit-paths.mjs`
+to report collisions; reconcile them with preserved Git state before retrying.
+Do not simply lowercase every path or rename existing directories automatically.
+For example, requesting `ExampleOrg/Tools` reuses an existing verified
+`repos/exampleorg/tools`; it must not create another clone.
+
+Ticket IDs and Git branches retain exact case: `TASK-1423` must not become
+`task-1423`. Case-only ticket or local branch conflicts are rejected. Existing
+worktrees must match their primary clone, registration, and ticket branch.
+New clone metadata is fetched using the routed account; reusing an existing
+clone requires no network. Creation uses a workspace lock; retry if another
+creator is running. Only remove a stale lock after checking no creator remains.
+
+Organization routing is case-insensitive and exact only; an unmatched
+organization uses the default identity. Preserve machine-specific routing
+policies when updating scripts in an existing workspace. Deploy a compatible
+set of scripts without regenerating identity configuration just for an update.

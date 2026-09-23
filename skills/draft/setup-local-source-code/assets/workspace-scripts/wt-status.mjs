@@ -10,6 +10,7 @@
 // See the workspace AGENTS.md generated during setup for the full design.
 
 import {
+  reportCaseCollisions,
   getChangedFileCount,
   getCurrentBranch,
   getUpstreamAheadBehind,
@@ -64,6 +65,7 @@ function main() {
     process.exit(1);
   }
 
+  reportCaseCollisions();
   const tickets = listTicketFolders();
 
   if (tickets.length === 0) {

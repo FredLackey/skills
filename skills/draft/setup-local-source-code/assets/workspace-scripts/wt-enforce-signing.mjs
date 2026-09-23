@@ -2,6 +2,7 @@
 
 import { resolveIdentity } from './lib/wt-config.mjs';
 import {
+  assertNoCaseCollisions, validatePrimary,
   configureRepositoryIdentity, gitOrNull, listPrimaryRepos, repositoryIdentitySettings,
 } from './lib/wt-lib.mjs';
 
@@ -39,8 +40,10 @@ function main() {
   if (!gitSupportsSshSigning()) throw new Error('SSH signing requires Git 2.34 or newer.');
   const dryRun = args.includes('--dry-run');
   let failures = 0;
+  assertNoCaseCollisions();
   const repositories = listPrimaryRepos();
   for (const entry of repositories) {
+    validatePrimary(entry.path, entry.org, entry.repo);
     if (gitOrNull(['rev-parse', '--git-dir'], { cwd: entry.path }) === null) {
       console.error(`FAIL    ${entry.org}/${entry.repo}: not a Git repository`);
       failures += 1;

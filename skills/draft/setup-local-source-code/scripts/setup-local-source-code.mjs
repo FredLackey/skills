@@ -13,6 +13,7 @@ const MANAGED_FILES = [
   ['clone-all.mjs', 0o755],
   ['clone-mine.mjs', 0o755],
   ['wt-create.mjs', 0o755],
+  ['wt-audit-paths.mjs', 0o755],
   ['wt-enforce-signing.mjs', 0o755],
   ['wt-list.mjs', 0o755],
   ['wt-open.mjs', 0o755],
@@ -26,6 +27,7 @@ const MANAGED_FILES = [
   [path.join('tests', 'clone-mine.test.mjs'), 0o644],
   [path.join('tests', 'wt-pr-create.test.mjs'), 0o644],
   [path.join('tests', 'README.md'), 0o644],
+  [path.join('tests', 'path-casing.test.mjs'), 0o644],
 ];
 
 function usage() {
@@ -213,7 +215,13 @@ function generatedGuide(config) {
     `- \`research\`: dated, durable research notes indexed by \`TOPICS.md\`.\n\n` +
     `A ticket folder is a plain grouping directory. Every repository worktree inside ` +
     `one ticket folder uses the ticket ID or slug as its branch name.\n\n` +
+    `GitHub owner/repository names are matched case-insensitively. Reuse a unique existing ` +
+    `path; new names use GitHub spelling, within an existing owner directory if present. ` +
+    `Multiple case variants are an error: run scripts/wt-audit-paths.mjs and reconcile them ` +
+    `without deleting unique Git state. Ticket IDs and branches retain exact case. ` +
+    `New client directory names are lowercase. Never bypass these checks with manual clones.\n\n` +
     `## Commands\n\n` +
+    `- \`wt-audit-paths.mjs\`: report case collisions without changing files.\n` +
     `- \`wt-create.mjs {org}/{repo} {client} {ticket}\`: create or reuse a worktree.\n` +
     `- \`wt-enforce-signing.mjs\`: audit or repair identity and SSH signing in every primary clone.\n` +
     `- \`wt-sync.mjs {org}/{repo}\`: fast-forward a clean primary clone.\n` +

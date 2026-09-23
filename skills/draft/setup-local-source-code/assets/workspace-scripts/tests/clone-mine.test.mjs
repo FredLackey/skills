@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { main, parseArgs, apiForAccount, contributionReason, canScanOrg } from '../clone-mine.mjs';
-import {
-  defaultIdentity, identities, orgIdentity,
-} from '../lib/wt-config.mjs';
+import * as workspaceConfig from '../lib/wt-config.mjs';
+const { identities, orgIdentity } = workspaceConfig;
+const defaultIdentity = workspaceConfig.defaultIdentity ?? 'default';
 
 const identity = identities[defaultIdentity];
 const user = identity.ghUser;

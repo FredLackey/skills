@@ -11,7 +11,9 @@ import {
   publishRepo,
   resolveBodyFiles,
 } from '../wt-pr-create.mjs';
-import { defaultIdentity, identities, orgIdentity } from '../lib/wt-config.mjs';
+import * as workspaceConfig from '../lib/wt-config.mjs';
+const { identities, orgIdentity } = workspaceConfig;
+const defaultIdentity = workspaceConfig.defaultIdentity ?? 'default';
 
 const identity = identities[defaultIdentity];
 const routedOrg = Object.entries(orgIdentity)

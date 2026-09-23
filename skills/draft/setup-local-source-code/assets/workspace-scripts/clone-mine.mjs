@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { identities, resolveIdentity } from './lib/wt-config.mjs';
 import {
   assertSafeSegment, configureRepositoryIdentity, ensureDirSync, git, isDirectory,
-  repoPath, runCmd, SOURCE_ROOT,
+  repoPath, runCmd, SOURCE_ROOT, withWorkspaceLock,
 } from './lib/wt-lib.mjs';
 
 export function usage() {
@@ -118,7 +118,11 @@ export function contributionReason(org, repo, login, api) {
 }
 
 /** Clones + configures one repo exactly like wt-create.mjs does. Returns a status string. */
-function cloneRepo(org, repo, identity) {
+export function cloneRepo(org, repo, identity) {
+  return withWorkspaceLock(() => cloneRepoUnlocked(org, repo, identity));
+}
+
+function cloneRepoUnlocked(org, repo, identity) {
   const repoDir = repoPath(org, repo);
 
   if (isDirectory(repoDir)) {
