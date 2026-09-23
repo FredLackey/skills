@@ -16,19 +16,10 @@
 import path from 'node:path';
 import { resolveIdentity } from './lib/wt-config.mjs';
 import {
-  assertSafeSegment,
-  configureRepositoryIdentity,
-  ensureDirSync,
-  getDefaultBranch,
-  git,
-  isDirectory,
-  localBranchExists,
-  parseOrgRepo,
-  pathExists,
-  repoPath,
-  SOURCE_ROOT,
-  ticketPath,
-  worktreePath,
+  assertSafeSegment, configureRepositoryIdentity, ensureDirSync,
+  getDefaultBranch, git, isDirectory, localBranchExists, parseOrgRepo,
+  pathExists, repoPath, SOURCE_ROOT, ticketPath, worktreePath,
+  canonicalRepository, withWorkspaceLock, validateWorktree, assertBranchCase,
 } from './lib/wt-lib.mjs';
 
 function usage() {
@@ -47,100 +38,52 @@ function usage() {
 
 function main() {
   const args = process.argv.slice(2);
+  if (args.includes('-h') || args.includes('--help')) { console.log(usage()); return; }
+  if (args.length !== 3) throw new Error(usage());
+  let { org, repo } = parseOrgRepo(args[0]);
+  const [, client, branch] = args;
+  assertSafeSegment(client, 'client');
+  assertSafeSegment(branch, 'ticket');
+  git(['check-ref-format', '--branch', branch]);
 
-  if (args.includes('-h') || args.includes('--help')) {
-    console.log(usage());
-    process.exit(0);
-  }
-
-  if (args.length !== 3) {
-    console.error(usage());
-    process.exit(1);
-  }
-
-  const [orgRepoArg, clientOrProject, ticketIdOrSlug] = args;
-
-  let org, repo;
-  try {
-    ({ org, repo } = parseOrgRepo(orgRepoArg));
-    assertSafeSegment(clientOrProject, 'client-or-project');
-    assertSafeSegment(ticketIdOrSlug, 'ticket-id-or-slug');
-  } catch (err) {
-    console.error(`Error: ${err.message}\n`);
-    console.error(usage());
-    process.exit(1);
-  }
-
-  const identity = resolveIdentity(org);
-  const repoDir = repoPath(org, repo);
-  const worktreeDir = worktreePath(clientOrProject, ticketIdOrSlug, repo);
-  const ticketDir = ticketPath(clientOrProject, ticketIdOrSlug);
-  const branch = ticketIdOrSlug;
-
-  // Clone the repo if we don't have a primary clone yet.
-  if (!isDirectory(repoDir)) {
-    if (!identity.gitUserEmail) {
-      console.error(
-        `Error: no gitUserEmail configured for the identity used by org "${org}" ` +
-          `(see ${SOURCE_ROOT}/scripts/lib/wt-config.mjs).\n` +
-          `Fill in that identity's gitUserEmail (its GitHub noreply address) before ` +
-          `cloning repos under this org — refusing to configure a repo with a blank ` +
-          `git identity.`
-      );
-      process.exit(1);
+  return withWorkspaceLock(() => {
+    const identity = resolveIdentity(org);
+    let repoDir = repoPath(org, repo);
+    // Inspect ticket occupancy before any clone/configuration mutation.
+    let worktreeDir = worktreePath(client, branch, repo);
+    if (pathExists(worktreeDir)) {
+      if (!isDirectory(repoDir)) throw new Error(`Worktree path is occupied without the requested primary: ${worktreeDir}`);
+      validateWorktree(worktreeDir, repoDir, branch);
     }
-
-    console.log(`Cloning ${org}/${repo} via ${identity.sshHost} into ${repoDir} ...`);
-    ensureDirSync(path.dirname(repoDir));
-    const cloneUrl = `git@${identity.sshHost}:${org}/${repo}.git`;
-    try {
-      git(['clone', cloneUrl, repoDir]);
-    } catch (err) {
-      console.error(`Error: failed to clone ${cloneUrl}\n${err.message}`);
-      process.exit(1);
+    if (!isDirectory(repoDir)) {
+      ({ org, repo } = canonicalRepository(org, repo));
+      repoDir = repoPath(org, repo);
     }
-
-  }
-
-  // Primary clones and all of their worktrees share this local config.
-  // Reapply it even when the clone already existed so signing cannot drift.
-  try {
+    // Use the chosen primary's real spelling for a new worktree directory.
+    worktreeDir = worktreePath(client, branch, path.basename(repoDir));
+    if (pathExists(worktreeDir)) validateWorktree(worktreeDir, repoDir, branch);
+    if (isDirectory(repoDir)) assertBranchCase(repoDir, branch);
+    if (!identity.gitUserEmail) throw new Error('Configure gitUserEmail in scripts/lib/wt-config.mjs before cloning.');
+    if (!isDirectory(repoDir)) {
+      ensureDirSync(path.dirname(repoDir));
+      git(['clone', `git@${identity.sshHost}:${org}/${repo}.git`, repoDir]);
+    }
     configureRepositoryIdentity(repoDir, identity);
-  } catch (err) {
-    console.error(`Error: failed to enforce git identity and SSH signing in ${repoDir}.\n${err.message}`);
-    process.exit(1);
-  }
-
-  // Idempotency check after enforcement: leave the existing worktree and
-  // branch untouched while repairing any shared repository-config drift.
-  if (pathExists(worktreeDir)) {
-    console.log(`Already exists; identity and SSH signing were re-enforced: ${worktreeDir}`);
-    process.exit(0);
-  }
-
-  // Create the ticket folder (and client-or-project parent) if needed. This
-  // must not assume the ticket folder is new/empty — it may already contain
-  // sibling repo worktrees from earlier wt-create runs.
-  ensureDirSync(ticketDir);
-
-  try {
+    if (pathExists(worktreeDir)) {
+      console.log(`Already exists; identity and SSH signing were re-enforced: ${worktreeDir}`);
+      return;
+    }
+    assertBranchCase(repoDir, branch);
+    ensureDirSync(ticketPath(client, branch));
     if (localBranchExists(repoDir, branch)) {
-      // Branch already exists locally (e.g. another repo in this ticket was
-      // created first, or a previous partial run). Reuse it as-is.
-      console.log(`Branch "${branch}" already exists in ${repoDir}; adding worktree from it.`);
       git(['worktree', 'add', worktreeDir, branch], { cwd: repoDir });
     } else {
       const defaultBranch = getDefaultBranch(repoDir);
-      console.log(`Creating branch "${branch}" from origin/${defaultBranch} ...`);
       git(['worktree', 'add', '-b', branch, worktreeDir, `origin/${defaultBranch}`], { cwd: repoDir });
     }
-  } catch (err) {
-    console.error(`Error: failed to create worktree at ${worktreeDir}\n${err.message}`);
-    process.exit(1);
-  }
-
-  console.log(`Worktree ready: ${worktreeDir} (branch "${branch}")`);
-  process.exit(0);
+    console.log(`Worktree ready: ${worktreeDir} (branch "${branch}")`);
+  });
 }
 
-main();
+try { main(); }
+catch (error) { console.error(`Error: ${error.message}`); process.exitCode = 1; }

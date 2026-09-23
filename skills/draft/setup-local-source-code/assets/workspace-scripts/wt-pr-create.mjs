@@ -9,6 +9,7 @@ import { pathToFileURL } from 'node:url';
 import { resolveIdentity } from './lib/wt-config.mjs';
 import {
   assertSafeSegment,
+  assertNoCaseCollisions,
   getPrimaryRepoDirFromWorktree,
   git,
   listTicketFolders,
@@ -270,8 +271,12 @@ export function main(argv = process.argv.slice(2), deps = {}) {
   try { (deps.git ?? git)(['check-ref-format', '--branch', options.base], {}); }
   catch { throw new Error(`Invalid base branch: ${JSON.stringify(options.base)}.`); }
 
+  assertNoCaseCollisions();
   const tickets = (deps.listTicketFolders ?? listTicketFolders)();
-  const ticket = tickets.find((entry) => entry.client === options.client && entry.ticket === options.ticket);
+  const matches = tickets.filter(entry => same(entry.client, options.client) && same(entry.ticket, options.ticket));
+  if (matches.length > 1) throw new Error(`Ambiguous ticket: ${matches.map(entry => entry.path).join(', ')}`);
+  const ticket = matches[0];
+  if (ticket && ticket.ticket !== options.ticket) throw new Error(`Use exact ticket/branch case: ${ticket.ticket}`);
   if (!ticket) throw new Error(`No ticket folder found at ${ticketPath(options.client, options.ticket)}.`);
   if (!ticket.repos.length) throw new Error(`No repo worktrees found under ${ticket.path}.`);
 
@@ -279,6 +284,9 @@ export function main(argv = process.argv.slice(2), deps = {}) {
   // Complete every local check before performing authentication or any remote mutation.
   const repos = ticket.repos.map((repo) =>
     preflightRepo(repo, options.ticket, bodies.get(repo.repo), deps));
+
+  const keys = repos.map(repo => `${repo.org}/${repo.repo}`.toLowerCase());
+  if (new Set(keys).size !== keys.length) throw new Error('Duplicate repository identity in ticket.');
 
   if (options.dryRun) {
     log(`Validated ${repos.length} repo worktree(s); no fetch, push, or PR creation performed.`);

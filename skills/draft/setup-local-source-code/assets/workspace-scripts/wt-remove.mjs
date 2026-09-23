@@ -16,6 +16,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   assertSafeSegment,
+  validateManagedWorktree,
+  assertNoCaseCollisions,
   getCurrentBranch,
   getPrimaryRepoDirFromWorktree,
   git,
@@ -63,6 +65,7 @@ function removeOneRepoWorktree(worktreeDir, repo, { deleteBranch }) {
   const branch = getCurrentBranch(worktreeDir);
 
   try {
+    validateManagedWorktree(worktreeDir);
     git(['worktree', 'remove', worktreeDir], { cwd: primaryRepoDir });
   } catch (err) {
     return {
@@ -143,6 +146,7 @@ function main() {
     process.exit(1);
   }
 
+  assertNoCaseCollisions();
   const ticketDir = ticketPath(clientOrProject, ticketIdOrSlug);
 
   if (!isDirectory(ticketDir)) {
@@ -160,7 +164,7 @@ function main() {
   // --all mode: remove every repo worktree currently under the ticket
   // folder, one at a time, continuing past per-repo failures.
   const ticketEntry = listTicketFolders().find(
-    (t) => t.client === clientOrProject && t.ticket === ticketIdOrSlug
+    (t) => t.path === ticketDir
   );
   const repos = ticketEntry ? ticketEntry.repos : [];
 
@@ -184,7 +188,7 @@ function main() {
     fs.rmdirSync(ticketDir);
     console.log(`Removed now-empty ticket folder: ${ticketDir}`);
 
-    const clientDir = path.join(TREES_ROOT, clientOrProject);
+    const clientDir = path.dirname(ticketDir);
     if (isDirectory(clientDir) && isEmptyDir(clientDir)) {
       fs.rmdirSync(clientDir);
       console.log(`Removed now-empty client-or-project folder: ${clientDir}`);

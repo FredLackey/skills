@@ -16,6 +16,7 @@
 import fs from 'node:fs';
 import {
   getRegisteredWorktreePaths,
+  assertNoCaseCollisions,
   git,
   isEmptyDir,
   listPrimaryRepos,
@@ -51,6 +52,7 @@ function main() {
   }
 
   // 1. git worktree prune, per primary repo.
+  assertNoCaseCollisions();
   const primaryRepos = listPrimaryRepos();
 
   if (primaryRepos.length === 0) {
@@ -72,12 +74,9 @@ function main() {
   // worktree of any matching primary repo (by repo name — several orgs
   // could share a repo name, so a directory only counts as orphaned if none
   // of them still register it).
-  const registeredByRepoName = new Map(); // repo name -> Set<absolute path>
-  for (const { repo, path: repoDir } of primaryRepos) {
-    const registered = getRegisteredWorktreePaths(repoDir);
-    const existing = registeredByRepoName.get(repo) ?? new Set();
-    for (const p of registered) existing.add(p);
-    registeredByRepoName.set(repo, existing);
+  const registeredPaths = new Set();
+  for (const { path: repoDir } of primaryRepos) {
+    for (const registered of getRegisteredWorktreePaths(repoDir)) registeredPaths.add(registered);
   }
 
   const tickets = listTicketFolders();
@@ -85,8 +84,7 @@ function main() {
 
   for (const ticket of tickets) {
     for (const repo of ticket.repos) {
-      const registered = registeredByRepoName.get(repo.repo);
-      if (!registered || !registered.has(repo.path)) {
+      if (!registeredPaths.has(repo.path)) {
         orphans.push(repo.path);
       }
     }

@@ -142,3 +142,15 @@ After setup:
   user's explicit approval.
 - Keep all GitHub calls scoped to the username discovered from that identity's
   own login.
+
+## Repository path casing
+
+Use the shared helper scripts for all primary clones and worktrees. Owner and
+repository identity matching is case-insensitive; reuse a unique existing
+path and use GitHub spelling for new names. Do not lowercase ticket IDs or
+Git branches. Run `scripts/wt-audit-paths.mjs` during verification and report
+collisions separately from setup success. Never resolve duplicates by silently
+choosing one or deleting it. See the path policy in
+[the workspace convention](references/source-workspace-convention.md).
+When updating an existing installation, preserve its identity configuration and
+routing rules; do not regenerate them merely to deploy corrected helpers.
