@@ -1,11 +1,11 @@
 # Workspace Script Tests
 
-Run the clone-discovery regression checks with:
+From an installed workspace, run the workspace-script regression checks with:
 
 ```sh
-node --test scripts/tests/clone-mine.test.mjs scripts/tests/clone-all.test.mjs
+node --test scripts/tests/*.test.mjs
 ```
 
-The tests use generated workspace identity configuration plus fake GitHub
-responses and clone operations. They do not contact GitHub, expose stored
-tokens, or create primary clones.
+The tests use generated workspace identity configuration, temporary files,
+fake GitHub responses, and fake Git operations. They do not contact GitHub,
+expose stored tokens, create primary clones, push branches, or create PRs.

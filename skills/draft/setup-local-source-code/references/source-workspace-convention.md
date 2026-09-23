@@ -44,6 +44,10 @@ The setup installs dependency-free executable Node.js tools:
   default branch.
 - `wt-list.mjs` lists task folders and their repository worktrees.
 - `wt-status.mjs` reports clean/dirty and ahead/behind state.
+- `wt-pr-create.mjs {client} {ticket} {base-branch}` locally preflights every
+  repo worktree in a ticket, pushes each ticket branch, and creates its GitHub
+  PR using a shared body file or repo-specific body files. It does not fetch or
+  merge, reuses existing open PRs, and prints every resulting link.
 - `wt-remove.mjs` safely removes a clean worktree and can optionally delete its
   merged local branch.
 - `wt-prune.mjs` reports stale worktree directories and removes them only with

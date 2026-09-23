@@ -1,3 +1,4 @@
+// Hostnames, usernames, addresses, and machine identifiers below are synthetic fixtures.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -50,7 +51,7 @@ test('preflight, doctor, and resolve arguments keep their scopes separate', () =
     approve: null, dryRun: false, host: false, manifest: null,
   });
   assert.equal(parseArgs(['doctor', '--host', '--json']).host, true);
-  assert.equal(parseArgs(['doctor', '--target', 'fred@workbox']).targets[0], 'fred@workbox');
+  assert.equal(parseArgs(['doctor', '--target', 'operator@workbox']).targets[0], 'operator@workbox');
   assert.equal(parseArgs([
     'resolve', '--report', 'private.json', '--remediation', 'remediation:ssh:abc',
     '--approve', `sha256:${'a'.repeat(64)}`,
@@ -154,7 +155,7 @@ test('private CIDR parsing is strict and deterministic', () => {
 
 test('names are portable and do not pretend Local is configurable', () => {
   assert.equal(normalizeName('Build Box.example.test'), 'build-box');
-  assert.equal(normalizeName('Fred’s Mac Mini'), 'fred-s-mac-mini');
+  assert.equal(normalizeName('Developer’s Workstation'), 'developer-s-workstation');
   assert.equal(normalizeName('Local'), 'machine');
   assert.equal(normalizeName('***'), 'machine');
 });
@@ -260,7 +261,7 @@ test('remediation approval binds operation and target', () => {
   const base = {
     id: 'remediation:ssh.interactive-verify:abc', operation: 'ssh.interactive-verify',
     actor: 'local-user', disposition: 'interactive-user', requiresApproval: true, requiresTty: true,
-    summary: 'Verify SSH', possibleChanges: ['user-known-hosts'], target: 'fred@workbox', port: 22, configMode: 'user',
+    summary: 'Verify SSH', possibleChanges: ['user-known-hosts'], target: 'operator@workbox', port: 22, configMode: 'user',
   };
   const value = { ...base, digest: remediationDigest(base) };
   assert.doesNotThrow(() => validateRemediation(value));
@@ -274,7 +275,7 @@ test('client doctor preserves the destination user and offers a digest-bound int
   const ssh = path.join(directory, 'ssh');
   fs.writeFileSync(ssh, `#!/bin/sh
 if [ "$1" = "-G" ]; then
-  printf '%s\\n' 'hostname workbox.test' 'user remote-fred' 'port 22' 'proxyjump none' 'proxycommand none' 'identitiesonly yes'
+  printf '%s\\n' 'hostname workbox.test' 'user remote-operator' 'port 22' 'proxyjump none' 'proxycommand none' 'identitiesonly yes'
   exit 0
 fi
 printf '%s\\n' 'Permission denied (publickey).' >&2
@@ -286,7 +287,7 @@ exit 255
   assert.equal(result.status, 0, result.stderr);
   const report = JSON.parse(result.stdout);
   assert.equal(report.route.reasonCode, 'ssh.authentication.rejected');
-  assert.equal(report.route.effective.user, 'remote-fred');
+  assert.equal(report.route.effective.user, 'remote-operator');
   assert.equal(report.route.herdr.state, 'not-checked');
   assert.equal(report.remediations[0].operation, 'ssh.interactive-verify');
   assert.match(report.remediations[0].digest, /^sha256:[a-f0-9]{64}$/);
@@ -307,7 +308,7 @@ test('resolver requires an exact digest and a real TTY before launching interact
   const base = {
     id: 'remediation:ssh.interactive-verify:test', operation: 'ssh.interactive-verify',
     actor: 'local-user', disposition: 'interactive-user', requiresApproval: true, requiresTty: true,
-    summary: 'Verify SSH', possibleChanges: ['user-known-hosts'], target: 'fred@workbox', port: 22, configMode: 'user',
+    summary: 'Verify SSH', possibleChanges: ['user-known-hosts'], target: 'operator@workbox', port: 22, configMode: 'user',
   };
   const action = { ...base, digest: remediationDigest(base) };
   const reportFile = path.join(directory, 'report.json');
@@ -365,18 +366,18 @@ esac
 `, { mode: 0o700 });
   fs.writeFileSync(path.join(directory, 'ssh'), `#!/bin/sh
 if [ "$1" = "-G" ]; then
-  printf '%s\\n' 'hostname workbox.test' 'user remote-fred' 'port 22' 'proxyjump none' 'proxycommand none' 'identitiesonly yes'
+  printf '%s\\n' 'hostname workbox.test' 'user remote-operator' 'port 22' 'proxyjump none' 'proxycommand none' 'identitiesonly yes'
   exit 0
 fi
 printf '%s\\n' 'SETUP_MULTI_HERDR_V1' 'os=Linux' 'arch=x86_64' 'hostname=workbox' 'machine_id=machine-1' 'tailscale_ip=' 'herdr_version=herdr 0.9.0' 'herdr_running=true'
 `, { mode: 0o700 });
   const result = spawnSync(process.execPath, [
-    script, 'discover', '--json', '--interface', 'definitely-not-an-interface', '--target', 'fred@workbox',
+    script, 'discover', '--json', '--interface', 'definitely-not-an-interface', '--target', 'operator@workbox',
   ], { encoding: 'utf8', env: { ...process.env, PATH: directory }, timeout: 10000 });
   assert.equal(result.status, 0, result.stderr);
   const report = JSON.parse(result.stdout);
   assert.equal(report.outcome, 'catalog-actions-ready');
-  assert.equal(report.nodes[0].routes[0].effective.user, 'remote-fred');
+  assert.equal(report.nodes[0].routes[0].effective.user, 'remote-operator');
   assert.equal(report.nodes[0].routes[0].reasonCode, 'remote.herdr.running');
   assert.equal(report.proposal.approval.actions[0].type, 'add');
   assert.match(report.proposal.digest, /^sha256:[a-f0-9]{64}$/);

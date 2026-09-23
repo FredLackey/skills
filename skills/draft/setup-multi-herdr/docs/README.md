@@ -8,6 +8,9 @@ then carries out the approved plan.
 The skill does not run automatically. It must be invoked by name, and works
 with any AI coding agent that supports invoking named skills.
 
+All account names, hostnames, and network ranges in the examples are fictional.
+Replace them with values appropriate to your own environment.
+
 ## What it accomplishes
 
 The skill can:
