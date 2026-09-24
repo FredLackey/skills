@@ -1,0 +1,138 @@
+{
+  "font": {
+    "name": "JetBrainsMonoNLNF-Medium",
+    "size": 18.0
+  },
+  "profile": {
+    "name": "Easy Reader",
+    "type": "Window Settings",
+    "FontAntialias": true,
+    "UseBoldFonts": true,
+    "FontWidthSpacing": 1.0,
+    "FontHeightSpacing": 1.0,
+    "CursorType": 0,
+    "CursorBlink": false,
+    "BackgroundAlphaInactive": 1.0,
+    "BackgroundBlur": 0.0,
+    "ScrollbackLines": 10000,
+    "UnlimitedScrollback": false,
+    "ShowWindowSettingsName": false,
+    "ShowShellCommandInTitle": false,
+    "ShowActiveProcessInTitle": true,
+    "ShowCommandKeyInTitle": false,
+    "ShowDimensionsInTitle": false,
+    "ShowTTYNameInTitle": false,
+    "ShowRepresentedURLInTitle": true,
+    "ShowRepresentedURLPathInTitle": true,
+    "Shell": "",
+    "shellExitAction": 1
+  },
+  "archives": {
+    "Font": "font",
+    "BackgroundColor": [
+      0.156863,
+      0.164706,
+      0.211765
+    ],
+    "TextColor": [
+      0.972549,
+      0.972549,
+      0.94902
+    ],
+    "TextBoldColor": [
+      0.972549,
+      0.972549,
+      0.94902
+    ],
+    "CursorColor": [
+      0.972549,
+      0.972549,
+      0.94902
+    ],
+    "SelectionColor": [
+      0.266667,
+      0.278431,
+      0.352941
+    ],
+    "ANSIBlackColor": [
+      0.129412,
+      0.141176,
+      0.192157
+    ],
+    "ANSIRedColor": [
+      1.0,
+      0.333333,
+      0.333333
+    ],
+    "ANSIGreenColor": [
+      0.313726,
+      0.980392,
+      0.482353
+    ],
+    "ANSIYellowColor": [
+      0.945098,
+      0.980392,
+      0.54902
+    ],
+    "ANSIBlueColor": [
+      0.741176,
+      0.576471,
+      0.976471
+    ],
+    "ANSIMagentaColor": [
+      1.0,
+      0.47451,
+      0.776471
+    ],
+    "ANSICyanColor": [
+      0.545098,
+      0.913725,
+      0.992157
+    ],
+    "ANSIWhiteColor": [
+      0.972549,
+      0.972549,
+      0.94902
+    ],
+    "ANSIBrightBlackColor": [
+      0.384314,
+      0.396078,
+      0.466667
+    ],
+    "ANSIBrightRedColor": [
+      1.0,
+      0.47451,
+      0.47451
+    ],
+    "ANSIBrightGreenColor": [
+      0.435294,
+      1.0,
+      0.592157
+    ],
+    "ANSIBrightYellowColor": [
+      0.960784,
+      1.0,
+      0.654902
+    ],
+    "ANSIBrightBlueColor": [
+      0.815686,
+      0.682353,
+      1.0
+    ],
+    "ANSIBrightMagentaColor": [
+      1.0,
+      0.592157,
+      0.85098
+    ],
+    "ANSIBrightCyanColor": [
+      0.654902,
+      0.952941,
+      1.0
+    ],
+    "ANSIBrightWhiteColor": [
+      1.0,
+      1.0,
+      1.0
+    ]
+  }
+}

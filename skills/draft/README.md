@@ -38,3 +38,13 @@ requirements, safety boundaries, and usage examples.
 Its prerequisite-first discovery, destination-user-safe probing, causal
 diagnostics, one-action resolver, target-local doctor, privacy controls, and
 interactive apply workflow are being validated before canary promotion.
+
+## `easy-reader-terminal`
+
+Applies the fixed Easy Reader font, Dracula theme, spacing, cursor, and
+appearance settings to iTerm2, Ghostty, macOS Terminal, and VS Code without
+requiring a particular monitor size or model. Includes the setup scripts and
+self-contained static profile resources.
+
+**Current state:** Initial draft ported from the established research presets.
+See [the skill](easy-reader-terminal/SKILL.md) for its application workflow.

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Easy Reader Terminal"
+  short_description: "Apply the fixed Easy Reader terminal configuration"
+  default_prompt: "Use $easy-reader-terminal to apply the Easy Reader setup to my terminal."
