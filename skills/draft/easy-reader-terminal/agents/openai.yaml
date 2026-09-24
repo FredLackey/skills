@@ -1,4 +1,4 @@
 interface:
   display_name: "Easy Reader Terminal"
-  short_description: "Apply the fixed Easy Reader terminal configuration"
-  default_prompt: "Use $easy-reader-terminal to apply the Easy Reader setup to my terminal."
+  short_description: "Install and activate the Easy Reader visual setup"
+  default_prompt: "Use $easy-reader-terminal to install, configure, and activate Easy Reader on my machine now."

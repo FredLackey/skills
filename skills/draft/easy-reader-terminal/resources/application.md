@@ -1,6 +1,8 @@
 # Applying the preset
 
-Run scripts from their installed skill location. They locate bundled resources
+Execute this workflow as part of applying the skill; do not stop after installing
+the skill package. Discover and configure all installed supported applications
+unless the user explicitly narrows the target. Run scripts from their installed skill location. They locate bundled resources
 relative to themselves and discover the user's home directory at runtime.
 They do not require access to any source repository or a particular display.
 
@@ -24,12 +26,15 @@ The dependency installers use Homebrew on macOS. They install the original
 JetBrains Mono Nerd Font cask; Ghostty's installer also installs Ghostty and
 VS Code's installer checks/installs jq. VS Code settings application additionally
 requires Python 3 for safe JSONC parsing. Terminal.app generation requires Swift
-and Cocoa on macOS. iTerm2 must already be installed. VS Code must already be
-installed with its CLI available or at the standard macOS application location.
+and Cocoa on macOS. Install missing helper dependencies before running the
+scripts. The iTerm2 and VS Code helpers assume their applications are installed;
+when the user explicitly requests an absent application, install it first.
+Locate VS Code's CLI or make it available to the script using its actual location.
 
 The VS Code apply script supports macOS and Linux. On Linux, install the same
 font, jq, Python 3, and VS Code CLI through the environment's supported process
 before running `02-apply-settings.sh`; do not run the Homebrew dependency script.
+Perform these installs during the task rather than leaving them as user homework.
 Its settings path honors `XDG_CONFIG_HOME`. Check that this is the active VS Code
 profile, not a portable installation, alternate distribution, or named profile.
 For another profile, merge the bundled exact settings into its active settings
@@ -79,8 +84,34 @@ window/profile and check 18-size Medium text, default terminal spacing, Dracula,
 and a steady block cursor. Check VS Code editor line height separately. Use
 `0 O 1 l I 8 B 5 S`, `[] {} ()`, and `!= => >=` to inspect glyphs and ligatures.
 Inspect actual application output, including dim ANSI text and selection.
-Titlebar changes may require quitting and reopening the application. No display
-measurement or automatic resizing is part of this workflow.
+No display measurement or automatic resizing is part of this workflow.
+Use the activation steps below before declaring the setup complete.
+
+## Activate immediately
+
+Treat messages printed by the legacy scripts such as “Next: run ...”, “reload”,
+or “set as default” as instructions for the applying agent to carry out. They
+are not completion messages and must not become user homework.
+
+| Application | Activation the agent must perform |
+|---|---|
+| iTerm2 | Wait for the dynamic profile to load, select Easy Reader and make it the default in the application's profile controls. Open a new Easy Reader window or switch the current session's profile using available application automation. Confirm the displayed session actually uses it. |
+| Terminal.app | Confirm the generated `.terminal` import opened a window using Easy Reader, and verify the default/startup profile preferences. Keep the generated file available until import completes. Existing sessions may retain their prior profile: switch their settings through application controls when possible, preserving running commands. |
+| Ghostty | Invoke Reload Configuration through the application's menu or supported action. Open a new window to pick up window-only settings and confirm that the Easy Reader include wins over conflicting settings. Inspect the actual loaded configuration if nothing changes. |
+| VS Code | Confirm the Dracula extension is installed in the active profile and select Dracula. Apply the resource payload to the active user/profile settings. Reload the window if needed and open or inspect an integrated terminal. Inspect workspace and remote overrides if the effective settings differ. Restart safely if the titlebar requires it. |
+
+Use the installed application's controls or documented automation. Do not guess
+keyboard shortcuts, target an unrelated frontmost window, or blindly kill
+processes. When the agent is running inside a target terminal, opening a new
+configured window can provide immediate visual confirmation without destroying
+the current task. An application restart that risks active jobs or unsaved work
+is a concrete activation limitation, not a reason to abandon the rest of setup.
+
+If a script exits successfully but the display is unchanged, investigate active
+profile selection, missing font/fallback, settings precedence, and reload state.
+Do not explain this away as expected behavior: the visual change is the purpose
+of applying the skill. If inspection is impossible, report the setup as written
+but visually unverified, with the exact remaining limitation.
 
 ## Public technical references
 
