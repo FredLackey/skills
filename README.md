@@ -17,6 +17,11 @@ afterthought, and it's what makes publishing this safe.
 
 ## Repository Structure
 
+For local installation across AI harnesses, see the draft
+[`setup-shared-skills`](skills/draft/setup-shared-skills/SKILL.md) skill. It keeps
+one shared checkout using the `setup-local-source-code` workspace convention
+and connects supported harnesses to that source without per-harness copies.
+
 - [`docs/`](docs/) contains repository-wide documentation and helpful information.
 - [`skills/draft/`](skills/draft/) contains skills still in development.
 - [`skills/canary/`](skills/canary/) contains skills ready for testing.

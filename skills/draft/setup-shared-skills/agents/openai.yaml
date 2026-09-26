@@ -1,0 +1,7 @@
+interface:
+  display_name: "Setup Shared Skills"
+  short_description: "Share one skills checkout across local AI harnesses"
+  default_prompt: "Use $setup-shared-skills to install this skill from a shared local checkout in my selected AI harnesses."
+
+policy:
+  allow_implicit_invocation: true
