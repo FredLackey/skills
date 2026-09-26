@@ -48,8 +48,12 @@ skill's identity interview or workstation setup.
    existing clones. Use a durable primary clone at
    `<source-root>/repos/<owner>/<repository>` by default, with the configured
    source root or `~/Source` when none exists. Respect any documented host
-   namespace. Avoid temporary task worktrees and harness cache directories as
-   permanent installation sources.
+   namespace. Installation links and direct resource paths must point into the
+   primary clone, not a development worktree or harness cache. This applies to
+   this installer and to skills maintained by the user or another developer.
+   If given a worktree path, resolve its registered primary clone and the same
+   relative skill path there before creating a connection. Do not assume the
+   directory where this installer is running is the installation source.
 3. Use the configured workspace helpers to acquire or refresh the repository.
    Preserve its identity routing, SSH transport, and signing configuration. Do
    not clone unrelated repositories or initialize an entire workspace just to
@@ -129,14 +133,31 @@ or machine as a default source.
 
 ## Updating And Removing
 
-Update the shared primary clone once with the workspace's sync helper, then
-recheck connections and reload the selected harnesses. Links do not fetch Git
-updates. If the user pinned a revision, keep it pinned; do not sync it forward.
+For a skill being developed or maintained, keep development and installation
+separate throughout the update:
+
+1. Edit and validate the skill in its task worktree.
+2. Commit and push the task branch through the repository's normal workflow.
+3. Merge the authorized change into the remote default branch.
+4. Fetch and fast-forward the local primary clone with the workspace's sync
+   helper so it contains the merged change.
+5. Verify the installed connections still resolve into that primary clone,
+   then reload skills or start fresh harness sessions as needed.
+
+Keep the installation links on the primary clone during development; do not
+repoint them to a worktree to expose an unmerged change. A push or remote merge
+alone does not update the local files that the harness reads. When another
+developer publishes the change, start at step 4. If a new skill exists only in
+a worktree, complete its authorized publication and primary-clone refresh
+first; otherwise report that it is not yet available for shared installation.
+
+Links do not fetch Git updates. If the user pinned a revision, keep it pinned;
+do not sync it forward.
 If a skill moves between release-level folders, resolve its new reviewed path
 and repair affected registrations while preserving rollback information.
 
-Author skill changes in task worktrees. Never edit the primary through an
-installation link or run an updater there that modifies tracked source files.
+Never edit the primary through an installation link or run an updater there
+that modifies tracked source files. Worktrees remain separate authoring areas.
 Canonical documents bundled inside a skill still need their normal packaging
 step; shared installation only removes the per-harness copies.
 

@@ -36,6 +36,40 @@ actual repository layout instead of assuming a level or subdirectory.
   tree. Do not reset local changes, overwrite another repository, or switch a
   shared installation clone to a feature branch for one harness.
 
+## Managed Skills: Worktrees And Installation
+
+Use the same separation whether the skill is maintained by the current user
+or another developer:
+
+```text
+repos/example-org/agent-skills/skills/stable/code-review/
+    ↑ harness installation link points here
+
+trees/example-project/update-review/agent-skills/skills/stable/code-review/
+    author edits and validates here; installation links do not point here
+```
+
+If a supplied skill path is inside a worktree, inspect the workspace helpers
+or Git's registered worktrees (`git worktree list --porcelain`) and shared Git
+directory (`git rev-parse --path-format=absolute --git-common-dir`) to identify
+the primary clone. Preserve the skill's path relative to the repository root
+when locating its counterpart in the primary. Do not infer the primary from
+similar directory names or blindly use the current working directory.
+
+For an authorized update, edit and validate in the worktree, commit and push
+the task branch, merge it into the remote default branch, then refresh the
+local primary clone with `wt-sync.mjs <owner>/<repository>`. Verify the primary
+contains the merged change before reloading the harnesses. If another developer
+has already merged the update, only the local refresh and verification remain.
+
+Do not retarget installed skills to development worktrees while waiting for a
+merge. If the skill does not yet exist in the primary, complete publication
+when authorized or report that installation is waiting on publication; a
+request to install a skill alone does not authorize publishing unmerged work.
+Any correction to an existing worktree-backed registration follows the normal
+conflict-preserving migration workflow. Removing a task worktree must not break
+an installed skill.
+
 ## With Workspace Helpers
 
 Use the installed tools and their local `--help`; do not copy tools out of a
@@ -89,8 +123,9 @@ rename the skill silently.
 An explicit version pin needs a durable checkout dedicated to that revision
 under the existing workspace policy. Keep it separate from the shared default
 branch checkout, record the resolved commit, and do not automatically advance
-it. An explicitly selected development worktree is usable for testing; explain
-that its edits are immediately visible and its removal breaks the installation.
+it. Do not use a development worktree as the installed source, including when
+the skill itself is still in development. Test changes in a separate disposable
+environment without changing the user's normal harness registrations.
 
 An ordinary clone refresh can also remove or move a skill. Verify all affected
 registrations afterward. Do not claim that symlinks alone solve renamed paths,
