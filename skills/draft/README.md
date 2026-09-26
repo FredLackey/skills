@@ -23,6 +23,19 @@ standard and its existing worktree-management scripts. Its generated identity
 routing, GitHub CLI onboarding, dual-use SSH key registration, and locally
 enforced signing behavior are being validated before canary promotion.
 
+## `setup-shared-skills`
+
+Makes shared local installation the default for ordinary skill-install
+requests. Follows the `setup-local-source-code` workspace convention, connects
+selected AI harnesses to complete skill folders through symlinks or supported
+direct paths, and registers its own guidance alongside the requested skills.
+Includes a preview-first link helper that preserves conflicting installations.
+
+**Current state:** Initial draft with automatic discovery enabled. Link behavior
+is covered by isolated tests; product discovery and platform support must be
+verified on each target computer before reporting installation success.
+See [the skill](setup-shared-skills/SKILL.md) for setup and update guidance.
+
 ## `setup-multi-herdr`
 
 Discovers Herdr-capable machines across Tailscale and directly connected local
