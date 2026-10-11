@@ -2,26 +2,32 @@
 // Clone every repository in every organization routed to a configured GitHub
 // profile. Repository selection uses organization membership and repository
 // listings only; it does not inspect commits, branches, or repository contents.
+//
+// This deliberately ignores authorship. Run it only when the user explicitly
+// asks to include repositories they never committed to; otherwise use
+// clone-mine.mjs.
 
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { identities, resolveIdentity } from './lib/wt-config.mjs';
+import { DEFAULT_HOST, findIdentity, listIdentities } from './lib/wt-config.mjs';
+import { assertWorkstationReady, describeDrift, effectiveDrift } from './lib/wt-signing.mjs';
 import {
-  assertSafeSegment, configureRepositoryIdentity, ensureDirSync, git, isDirectory,
+  assertSafeSegment, cloneUrl, ensureDirSync, git, isDirectory,
   repoPath, runCmd, SOURCE_ROOT, withWorkspaceLock,
 } from './lib/wt-lib.mjs';
 
 export function usage() {
   return `Usage: clone-all.mjs [--profile {name}] [--dry-run]
 
-Discover organizations available to configured GitHub profiles and clone every
-repository into ${SOURCE_ROOT}/repos/{org}/{repo}. Clones use each profile's
-routed SSH host and signed-commit settings. Existing clones are skipped without
-fetching.
+Clone every repository in every organization routed to a configured GitHub
+account into ${SOURCE_ROOT}/repos/{org}/{repo}, whether or not you ever
+committed to it. Use only when explicitly asked to include such repositories;
+clone-mine.mjs is the normal, authorship-filtered command. Organizations without
+a route are skipped. Existing clones are skipped without fetching.
 
 Options:
-  --profile {name}  Restrict discovery to one configured profile, such as
-                    ${Object.keys(identities).join(' or ')} (optional).
+  --profile {name}  Restrict discovery to one configured GitHub account id
+                    from the workspace configuration (optional).
   --dry-run         List repositories without cloning or writing Git config.
   -h, --help        Show this help.
 
@@ -107,10 +113,14 @@ export function apiForAccount(login, run = runCmd) {
   return api;
 }
 
+function githubProfiles() {
+  return listIdentities(DEFAULT_HOST).map(identity => [identity.id, identity]);
+}
+
 function configuredProfile(name) {
-  const entry = Object.entries(identities).find(([profile]) => same(profile, name));
+  const entry = githubProfiles().find(([profile]) => same(profile, name));
   if (!entry) {
-    throw new Error(`Unknown profile ${name}. Configured profiles: ${Object.keys(identities).join(', ')}.`);
+    throw new Error(`Unknown profile ${name}. Configured GitHub accounts: ${githubProfiles().map(([id]) => id).join(', ')}.`);
   }
   return entry;
 }
@@ -124,19 +134,16 @@ function cloneRepoUnlocked(org, repo, identity) {
   const repoDir = repoPath(org, repo);
   if (isDirectory(repoDir)) return `SKIP (exists) ${repo}`;
 
-  const cloneUrl = `git@${identity.sshHost}:${org}/${repo}.git`;
   ensureDirSync(path.dirname(repoDir));
   try {
-    git(['clone', cloneUrl, repoDir]);
+    git(['clone', cloneUrl(org, repo, identity), repoDir]);
   } catch (error) {
     return `FAIL  ${repo}\n       ${error.message.split('\n').join('\n       ')}`;
   }
 
-  try {
-    configureRepositoryIdentity(repoDir, identity);
-  } catch (error) {
-    return `WARN  ${repo} (cloned but failed to configure git identity)\n       ${error.message}`;
-  }
+  // Identity and signing come from the workstation configuration.
+  const drift = effectiveDrift(repoDir, identity);
+  if (drift.length) return `WARN  ${repo} (cloned, but identity does not match ${identity.id}: ${describeDrift(drift)})`;
   return `OK    ${repo}`;
 }
 
@@ -153,7 +160,8 @@ export function main(argv = process.argv.slice(2), deps = {}) {
 
   const selectedProfiles = options.profile
     ? [configuredProfile(options.profile)]
-    : Object.entries(identities);
+    : githubProfiles();
+  if (!options.dryRun && !deps.cloneRepo) assertWorkstationReady();
   const accounts = discoverAccounts(run);
   const profiles = selectedProfiles.map(([name, identity]) => ({
     name,
@@ -175,14 +183,13 @@ export function main(argv = process.argv.slice(2), deps = {}) {
       if (account.state !== 'success') {
         throw new Error(`Authentication is unhealthy for ${login}. Check gh auth status.`);
       }
-      for (const key of ['sshHost', 'sshKeyPath', 'gitUserName', 'gitUserEmail']) {
-        if (!identity[key]) throw new Error(`Configure ${key} for profile ${name} in lib/wt-config.mjs.`);
-      }
-
       const api = apiForAccount(login, run);
       const orgs = api('user/orgs?per_page=100', { paginate: true });
-      const routedOrgs = orgs.filter(({ login: org }) =>
-        same(resolveIdentity(org).ghUser, login));
+      const routedOrgs = orgs.filter(({ login: org }) => {
+        const routed = findIdentity(org, DEFAULT_HOST);
+        if (!routed) log(`SKIP  ${org} (not routed; add with: wt-route.mjs add ${org} ${name}).`);
+        return routed && same(routed.ghUser, login);
+      });
       log(`${name} (${login}): ${routedOrgs.length} routed organization(s).`);
 
       for (const { login: org } of routedOrgs) {
@@ -200,7 +207,7 @@ export function main(argv = process.argv.slice(2), deps = {}) {
                 totals[exists ? 'skipped' : 'planned']++;
                 output(`- ${org}/${repo.name}`);
               } else {
-                const status = (deps.cloneRepo ?? cloneRepo)(org, repo.name, resolveIdentity(org));
+                const status = (deps.cloneRepo ?? cloneRepo)(org, repo.name, identity);
                 log(`  ${status}`);
                 totals[status.startsWith('OK') ? 'cloned' : status.startsWith('SKIP') ? 'skipped' : 'failed']++;
               }

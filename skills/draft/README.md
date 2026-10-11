@@ -14,14 +14,17 @@ Its structure and workflow are being validated before canary promotion.
 
 ## `setup-local-source-code`
 
-Interviews a developer about their client, GitHub, author, and SSH identities,
-then creates a portable source workspace with primary clones, task worktrees,
-local-only projects, durable research, and dependency-free Node.js tools.
+Interviews a developer about their client, GitHub, additional Git host, author,
+and SSH identities, then creates a portable source workspace with primary
+clones, task worktrees, local-only projects, durable research, and
+dependency-free Node.js tools. Personal values live only in one JSON
+configuration file; the helpers and workspace guide are identical everywhere
+and are updated by pulling the skill.
 
-**Current state:** Initial draft derived from the local source workspace
-standard and its existing worktree-management scripts. Its generated identity
-routing, GitHub CLI onboarding, dual-use SSH key registration, and locally
-enforced signing behavior are being validated before canary promotion.
+**Current state:** Draft. Explicit fail-closed owner routing, workstation-level
+SSH signing, additional Forgejo hosts, and update mode are being validated. It
+moves to stable once the structure has needed no modification across its
+author's machines.
 
 ## `setup-shared-skills`
 

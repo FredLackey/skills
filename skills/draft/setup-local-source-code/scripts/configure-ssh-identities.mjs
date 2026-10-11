@@ -58,24 +58,36 @@ function readIdentities(encoded) {
   const keyPaths = new Set();
   return config.identities.map((identity, index) => {
     const label = `identities[${index}]`;
-    for (const name of ['githubUser', 'sshHost', 'sshKeyPath']) {
-      if (typeof identity[name] !== 'string' || !identity[name].trim()) {
+    // `login` is the account name on its host; `githubUser` is the older spelling.
+    const login = identity.login ?? identity.githubUser;
+    for (const [name, value] of [['login', login], ['sshHost', identity.sshHost], ['sshKeyPath', identity.sshKeyPath]]) {
+      if (typeof value !== 'string' || !value.trim()) {
         throw new Error(`${label}.${name} must be a non-empty string.`);
       }
     }
-    if (!/^[A-Za-z0-9.-]+$/.test(identity.sshHost)) {
-      throw new Error(`${label}.sshHost contains unsupported characters.`);
+    const gitHost = String(identity.host ?? 'github.com').toLowerCase();
+    const sshPort = config.hosts?.[gitHost]?.sshPort ?? 22;
+    if (!Number.isInteger(sshPort) || sshPort < 1 || sshPort > 65535) throw new Error(`hosts.${gitHost}.sshPort must be a TCP port.`);
+    const aliases = identity.sshHostAliases ?? [];
+    if (!Array.isArray(aliases)) throw new Error(`${label}.sshHostAliases must be an array.`);
+    for (const alias of [identity.sshHost, gitHost, ...aliases]) {
+      if (!/^[A-Za-z0-9.-]+$/.test(alias)) throw new Error(`${label} has an SSH host with unsupported characters: ${alias}`);
     }
-    const hostKey = identity.sshHost.toLowerCase();
-    if (hosts.has(hostKey)) throw new Error(`Duplicate SSH host alias: ${identity.sshHost}`);
-    hosts.add(hostKey);
+    for (const alias of [identity.sshHost, ...aliases]) {
+      const hostKey = alias.toLowerCase();
+      if (hosts.has(hostKey)) throw new Error(`Duplicate SSH host alias: ${alias}`);
+      hosts.add(hostKey);
+    }
     const privateKey = expandHome(identity.sshKeyPath);
     if (privateKey === path.parse(privateKey).root) throw new Error(`${label}.sshKeyPath is unsafe.`);
     if (keyPaths.has(privateKey)) throw new Error(`SSH private key is shared by multiple identities: ${privateKey}`);
     keyPaths.add(privateKey);
     return {
-      githubUser: identity.githubUser.trim(),
+      githubUser: login.trim(),
       sshHost: identity.sshHost.trim(),
+      sshHostAliases: aliases.map((alias) => alias.trim()),
+      gitHost,
+      sshPort,
       privateKey,
       configuredKeyPath: identity.sshKeyPath.trim(),
     };
@@ -138,8 +150,9 @@ function ensureKeys(identities, options) {
 
 function sshFragment(identities) {
   return `${identities.map((identity) => [
-    `Host ${identity.sshHost}`,
-    '  HostName github.com',
+    `Host ${[identity.sshHost, ...identity.sshHostAliases].join(' ')}`,
+    `  HostName ${identity.gitHost}`,
+    ...(identity.sshPort === 22 ? [] : [`  Port ${identity.sshPort}`]),
     '  User git',
     `  IdentityFile ${identity.configuredKeyPath}`,
     '  IdentitiesOnly yes',
@@ -154,7 +167,8 @@ function sshFragment(identities) {
  * fragment rather than cleanly conflict — surface it instead of guessing.
  */
 function findExternalHostConflicts(configContent, fragmentPath, identities) {
-  const wanted = new Set(identities.map((identity) => identity.sshHost.toLowerCase()));
+  const wanted = new Set(identities.flatMap((identity) =>
+    [identity.sshHost, ...identity.sshHostAliases].map((alias) => alias.toLowerCase())));
   const conflicts = new Set();
   let insideManagedFragment = false;
   for (const rawLine of configContent.split(/\r?\n/)) {

@@ -10,7 +10,8 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import * as workspaceConfig from './wt-config.mjs';
+import { configuredSourceRoot, DEFAULT_HOST, hostConfig, isConfiguredHost, resolveIdentity } from './wt-config.mjs';
+import { forgejoApi, verifyForgejoIdentity } from './forgejo-api.mjs';
 
 // ---------------------------------------------------------------------------
 // Directory layout
@@ -25,29 +26,10 @@ export function expandHome(inputPath) {
   return inputPath;
 }
 
-export const SOURCE_ROOT = expandHome(workspaceConfig.sourceRoot ?? '~/Source');
+export const SOURCE_ROOT = expandHome(configuredSourceRoot());
 export const REPOS_ROOT = path.join(SOURCE_ROOT, 'repos');
 export const TREES_ROOT = path.join(SOURCE_ROOT, 'trees');
 export const SCRIPTS_ROOT = path.join(SOURCE_ROOT, 'scripts');
-
-/** Returns the repository-local Git settings required for a routed identity. */
-export function repositoryIdentitySettings(identity) {
-  return [
-    ['user.name', identity.gitUserName],
-    ['user.email', identity.gitUserEmail],
-    ['gpg.format', 'ssh'],
-    ['user.signingkey', expandHome(identity.sshKeyPath)],
-    ['commit.gpgsign', 'true'],
-    ['tag.gpgsign', 'true'],
-  ];
-}
-
-/** Enforces author identity and SSH signing in a primary clone's shared config. */
-export function configureRepositoryIdentity(repoDir, identity) {
-  for (const [key, value] of repositoryIdentitySettings(identity)) {
-    git(['config', '--local', '--replace-all', key, value], { cwd: repoDir });
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Path safety
@@ -107,10 +89,32 @@ export function parseOrgRepo(spec, label = 'org/repo argument') {
 }
 
 /** Builds the primary-clone path for an org/repo, validating both segments. */
-export function repoPath(org, repo) {
+export function repoPath(org, repo, host = DEFAULT_HOST) {
   assertSafeSegment(org, 'org');
   assertSafeSegment(repo, 'repo');
-  return resolvePrimaryPath(org, repo);
+  return resolvePrimaryPath(org, repo, host);
+}
+
+/** True for a configured host other than github.com; its clones live under repos/{host}/. */
+export function isAdditionalHost(host) {
+  return host.toLowerCase() !== DEFAULT_HOST && isConfiguredHost(host);
+}
+
+/** Extract an explicit host without changing legacy positional arguments. */
+export function takeHostOption(argv) {
+  const args = [];
+  let host = DEFAULT_HOST, supplied = false;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--host' || argv[i].startsWith('--host=')) {
+      if (supplied) throw new Error('--host may only be supplied once.');
+      supplied = true;
+      host = argv[i].includes('=') ? argv[i].slice(7) : argv[++i];
+      if (!host) throw new Error('--host requires a hostname.');
+      host = host.toLowerCase();
+      hostConfig(host);
+    } else args.push(argv[i]);
+  }
+  return { args, host };
 }
 
 /** Builds a ticket folder's path, validating both segments. */
@@ -364,6 +368,14 @@ export function listPrimaryRepos() {
   const entries = [];
   for (const org of listSubdirNames(REPOS_ROOT)) {
     const orgDir = path.join(REPOS_ROOT, org);
+    if (isAdditionalHost(org)) {
+      for (const owner of listSubdirNames(orgDir)) {
+        for (const repo of listSubdirNames(path.join(orgDir, owner))) {
+          entries.push({ host: org.toLowerCase(), org: owner, repo, path: path.join(orgDir, owner, repo) });
+        }
+      }
+      continue;
+    }
     for (const repo of listSubdirNames(orgDir)) {
       entries.push({ org, repo, path: path.join(orgDir, repo) });
     }
@@ -420,12 +432,29 @@ function uniqueDirectory(parent, name, { exact = false } = {}) {
   return selected;
 }
 
-export function validatePrimary(repoDir, org, repo) {
-  const identity = workspaceConfig.resolveIdentity(org);
+/** SSH clone URL for a routed owner/repo. */
+export function cloneUrl(org, repo, identity) {
+  return `git@${identity.sshHost}:${org}/${repo}.git`;
+}
+
+/**
+ * True when `url` is an SSH origin for org/repo through the identity's SSH
+ * host or one of its configured aliases. The one origin check every helper uses.
+ */
+export function originMatches(url, org, repo, identity) {
+  const normalized = value => value.replace(/^ssh:\/\/git@([^/:]+)(?::(\d+))?\//, (all, name, port) =>
+    !port || Number(port) === (identity.sshPort ?? 22) ? `git@${name}:` : all).replace(/\.git$/, '').toLowerCase();
+  const accepted = [identity.sshHost, ...(identity.sshHostAliases ?? [])]
+    .map(sshHost => normalized(`git@${sshHost}:${org}/${repo}.git`));
+  return accepted.includes(normalized(url));
+}
+
+export function validatePrimary(repoDir, org, repo, host = DEFAULT_HOST) {
+  const identity = resolveIdentity(org, host);
   const url = git(['remote', 'get-url', 'origin'], { cwd: repoDir });
-  const expected = `git@${identity.sshHost}:${org}/${repo}.git`;
-  const normalized = value => value.replace(/^ssh:\/\/git@([^/]+)\//, 'git@$1:').replace(/\.git$/, '').toLowerCase();
-  if (normalized(url) !== normalized(expected)) throw new Error(`Unexpected origin at ${repoDir}: ${url}; expected ${expected}`);
+  if (!originMatches(url, org, repo, identity)) {
+    throw new Error(`Unexpected origin at ${repoDir}: ${url}; expected ${cloneUrl(org, repo, identity)}`);
+  }
   const root = git(['rev-parse', '--show-toplevel'], { cwd: repoDir });
   const common = getPrimaryRepoDirFromWorktree(repoDir);
   if (fs.realpathSync(root) !== fs.realpathSync(repoDir) || !common || fs.realpathSync(common) !== fs.realpathSync(repoDir)) {
@@ -434,18 +463,27 @@ export function validatePrimary(repoDir, org, repo) {
 }
 
 /** Resolve a legacy path without network access; never prefer an exact match over ambiguity. */
-export function resolvePrimaryPath(org, repo) {
+export function resolvePrimaryPath(org, repo, host = DEFAULT_HOST) {
   assertSafeSegment(org, 'org');
   assertSafeSegment(repo, 'repo');
-  const ownerDir = uniqueDirectory(REPOS_ROOT, org);
+  host = hostConfig(host).host;
+  const root = host === DEFAULT_HOST ? REPOS_ROOT : uniqueDirectory(REPOS_ROOT, host);
+  const ownerDir = uniqueDirectory(root, org);
   const result = uniqueDirectory(ownerDir, repo);
-  if (fs.existsSync(result)) validatePrimary(result, org, repo);
+  if (fs.existsSync(result)) validatePrimary(result, org, repo, host);
   return result;
 }
 
-/** A new clone must use names obtained through the routed GitHub identity. */
-export function canonicalRepository(org, repo, run = runCmd) {
-  const identity = workspaceConfig.resolveIdentity(org);
+/** A new clone must use names obtained through the routed account. */
+export function canonicalRepository(org, repo, run = runCmd, host = DEFAULT_HOST, api = forgejoApi) {
+  const identity = resolveIdentity(org, host);
+  if (identity.provider === 'forgejo') {
+    verifyForgejoIdentity(identity, api);
+    const result = api(identity.host, `repos/${encodeURIComponent(org)}/${encodeURIComponent(repo)}`, 'GET', undefined, identity.login);
+    const canonical = parseOrgRepo(result.full_name);
+    if (!sameName(org, canonical.org) || !sameName(repo, canonical.repo)) throw new Error(`Repository redirected to ${result.full_name}; review routing before retrying with that name.`);
+    return canonical;
+  }
   const env = { ...process.env, GH_PROMPT_DISABLED: '1' };
   for (const key of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GH_HOST', 'GH_DEBUG']) delete env[key];
   let token;
@@ -511,7 +549,10 @@ export function caseCollisions() {
     }
     for (const entries of groups.values()) if (entries.length > 1) issues.push(entries);
   }
-  inspect(REPOS_ROOT, 2);
+  inspect(REPOS_ROOT, 1);
+  if (fs.existsSync(REPOS_ROOT)) {
+    for (const owner of listSubdirNames(REPOS_ROOT)) inspect(path.join(REPOS_ROOT, owner), isAdditionalHost(owner) ? 2 : 1);
+  }
   inspect(TREES_ROOT, 3);
   return issues;
 }
@@ -530,8 +571,9 @@ export function validateManagedWorktree(worktreeDir) {
   const primary = getPrimaryRepoDirFromWorktree(worktreeDir);
   if (!primary) throw new Error(`Not a managed worktree: ${worktreeDir}`);
   const parts = path.relative(REPOS_ROOT, primary).split(path.sep);
-  if (parts.length !== 2 || parts.includes('..')) throw new Error(`Primary outside managed repos: ${primary}`);
-  const resolved = repoPath(...parts);
+  const additional = parts.length === 3 && isAdditionalHost(parts[0]);
+  if ((!additional && parts.length !== 2) || parts.includes('..')) throw new Error(`Primary outside managed repos: ${primary}`);
+  const resolved = additional ? repoPath(parts[1], parts[2], parts[0]) : repoPath(...parts);
   validateWorktree(worktreeDir, resolved, path.basename(path.dirname(worktreeDir)));
   return resolved;
 }

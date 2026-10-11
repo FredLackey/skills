@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 // Discover locally authenticated github.com accounts, their organizations,
-// and repositories with commits authored by each profile. SSH/signing routing is
-// centralized in wt-config.mjs. Existing primary clones are left untouched.
+// and repositories with commits authored by each profile. Accounts and owner
+// routes come from the workspace configuration; only organizations routed to
+// the scanning account are considered. Existing primary clones are left untouched.
 
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { identities, resolveIdentity } from './lib/wt-config.mjs';
+import { DEFAULT_HOST, findIdentity, listIdentities } from './lib/wt-config.mjs';
+import { assertWorkstationReady, describeDrift, effectiveDrift } from './lib/wt-signing.mjs';
 import {
-  assertSafeSegment, configureRepositoryIdentity, ensureDirSync, git, isDirectory,
+  assertSafeSegment, cloneUrl, ensureDirSync, git, isDirectory,
   repoPath, runCmd, SOURCE_ROOT, withWorkspaceLock,
 } from './lib/wt-lib.mjs';
 
@@ -28,7 +30,8 @@ Options:
   --dry-run      Show matches without cloning or writing Git configuration.
   -h, --help     Show this help.
 
-New profiles need SSH/signing settings and org routing in lib/wt-config.mjs.
+Accounts and owner routes live in the workspace configuration. Organizations
+without a route to the scanning account are skipped; add one with wt-route.mjs.
 Organization discovery requires a classic/OAuth token with read:org or user
 scope; fine-grained tokens cannot enumerate memberships through user/orgs.
 Enterprise hosts are outside this github.com directory/routing scheme.`;
@@ -103,7 +106,8 @@ export function apiForAccount(login, run = runCmd) {
 export function canScanOrg(org, login) {
   // Defense in depth: refuse before any organization/repository API call
   // unless the configured route assigns this organization to the account.
-  return same(resolveIdentity(org).ghUser, login);
+  const identity = findIdentity(org, DEFAULT_HOST);
+  return Boolean(identity) && same(identity.ghUser, login);
 }
 
 export function contributionReason(org, repo, login, api) {
@@ -129,23 +133,19 @@ function cloneRepoUnlocked(org, repo, identity) {
     return `SKIP (exists) ${repo}`;
   }
 
-  const cloneUrl = `git@${identity.sshHost}:${org}/${repo}.git`;
+  const url = cloneUrl(org, repo, identity);
   ensureDirSync(path.dirname(repoDir));
 
   try {
-    git(['clone', cloneUrl, repoDir]);
+    git(['clone', url, repoDir]);
   } catch (err) {
     return `FAIL  ${repo}\n       ${err.message.split('\n').join('\n       ')}`;
   }
 
-  // Local config only — applies to every worktree of this repo (worktrees
-  // share the primary clone's .git config). Mirrors wt-create.mjs.
-  try {
-    configureRepositoryIdentity(repoDir, identity);
-  } catch (err) {
-    return `WARN  ${repo} (cloned but failed to configure git identity)\n       ${err.message}`;
-  }
-
+  // Identity and signing come from the workstation configuration, which
+  // matches the primary clone's directory; verify it resolved as routed.
+  const drift = effectiveDrift(repoDir, identity);
+  if (drift.length) return `WARN  ${repo} (cloned, but identity does not match ${identity.id}: ${describeDrift(drift)})`;
   return `OK    ${repo}`;
 }
 
@@ -156,6 +156,7 @@ export function main(argv = process.argv.slice(2), deps = {}) {
   const warn = deps.warn ?? console.warn;
   const run = deps.run ?? runCmd;
   if (options.help) { log(usage()); return 0; }
+  if (!options.dryRun && !deps.cloneRepo) assertWorkstationReady();
   let accounts = discoverAccounts(run);
   if (options.user) accounts = accounts.filter(a => same(a.login, options.user));
   if (!accounts.length) throw new Error('No matching locally authenticated github.com profiles. Check gh auth status.');
@@ -166,17 +167,17 @@ export function main(argv = process.argv.slice(2), deps = {}) {
     const login = account.login;
     try {
       if (account.state !== 'success') throw new Error(`Authentication is unhealthy for ${login}. Check gh auth status.`);
-      const identity = Object.values(identities).find(i => same(i.ghUser, login));
-      if (!identity || ['sshHost', 'sshKeyPath', 'gitUserName', 'gitUserEmail'].some(key => !identity[key])) {
-        throw new Error(`Configure SSH/signing identity for ${login} in lib/wt-config.mjs.`);
-      }
+      const identity = listIdentities(DEFAULT_HOST).find(i => same(i.ghUser, login));
+      if (!identity) throw new Error(`No account for ${login} in the workspace configuration.`);
       const api = apiForAccount(login, run);
       const orgs = api('user/orgs?per_page=100', { paginate: true });
       log(`${login}: ${orgs.length} organization(s).`);
       for (const { login: org } of orgs) {
         if (options.org && !same(org, options.org)) continue;
         if (!canScanOrg(org, login)) {
-          log(`SKIP  ${org} as ${login} (routed to ${resolveIdentity(org).ghUser}).`);
+          const routed = findIdentity(org, DEFAULT_HOST);
+          log(routed ? `SKIP  ${org} as ${login} (routed to ${routed.id}).`
+            : `SKIP  ${org} as ${login} (not routed; add with: wt-route.mjs add ${org} ${identity.id}).`);
           continue;
         }
         orgFound = true;
@@ -198,7 +199,7 @@ export function main(argv = process.argv.slice(2), deps = {}) {
                 totals[exists ? 'skipped' : 'planned']++;
                 output(`- ${org}/${repo.name}`);
               } else {
-                const status = (deps.cloneRepo ?? cloneRepo)(org, repo.name, resolveIdentity(org));
+                const status = (deps.cloneRepo ?? cloneRepo)(org, repo.name, identity);
                 log(`  ${status}`);
                 totals[status.startsWith('OK') ? 'cloned' : status.startsWith('SKIP') ? 'skipped' : 'failed']++;
               }

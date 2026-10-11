@@ -1,14 +1,12 @@
+import './helpers/test-config.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { main, parseArgs, apiForAccount, contributionReason, canScanOrg } from '../clone-mine.mjs';
-import * as workspaceConfig from '../lib/wt-config.mjs';
-const { identities, orgIdentity } = workspaceConfig;
-const defaultIdentity = workspaceConfig.defaultIdentity ?? 'default';
+import { identityFor } from '../lib/wt-config.mjs';
 
-const identity = identities[defaultIdentity];
+const identity = identityFor('personal');
 const user = identity.ghUser;
-const exactRoute = Object.entries(orgIdentity).find(([, identityId]) => identityId === defaultIdentity)?.[0];
-const org = exactRoute ?? 'portable-test-org';
+const org = 'exampleorg';
 const repo = (name) => ({ name, owner: { login: org }, default_branch: 'main' });
 
 function fixture({ dryRun = true, fail = false } = {}) {
