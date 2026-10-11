@@ -1,3 +1,4 @@
+import './helpers/test-config.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -11,13 +12,10 @@ import {
   publishRepo,
   resolveBodyFiles,
 } from '../wt-pr-create.mjs';
-import * as workspaceConfig from '../lib/wt-config.mjs';
-const { identities, orgIdentity } = workspaceConfig;
-const defaultIdentity = workspaceConfig.defaultIdentity ?? 'default';
+import { identityFor } from '../lib/wt-config.mjs';
 
-const identity = identities[defaultIdentity];
-const routedOrg = Object.entries(orgIdentity)
-  .find(([, identityId]) => identityId === defaultIdentity)?.[0] ?? 'portable-test-org';
+const identity = identityFor('personal');
+const routedOrg = 'exampleorg';
 
 test('parses shared and repo-specific body files', () => {
   const parsed = parseArgs([
@@ -42,13 +40,13 @@ test('rejects missing bodies, malformed mappings, and unsafe values', () => {
 });
 
 test('parses routed SSH remotes and rejects non-SSH origins', () => {
-  assert.deepEqual(parseGitHubRemote('git@github.com-ccsi:ccsi-ptg/billing.git'), {
-    transport: 'ssh', host: 'github.com-ccsi', org: 'ccsi-ptg', repo: 'billing',
+  assert.deepEqual(parseGitHubRemote('git@github.com-employer:employer-team/billing.git'), {
+    transport: 'ssh', host: 'github.com-employer', org: 'employer-team', repo: 'billing',
   });
-  assert.deepEqual(parseGitHubRemote('ssh://git@github.com/briskhaven/tools.git'), {
-    transport: 'ssh', host: 'github.com', org: 'briskhaven', repo: 'tools',
+  assert.deepEqual(parseGitHubRemote('ssh://git@github.com/example-org/tools.git'), {
+    transport: 'ssh', host: 'github.com', org: 'example-org', repo: 'tools',
   });
-  assert.throws(() => parseGitHubRemote('https://github.com/briskhaven/tools.git'), /must use SSH/);
+  assert.throws(() => parseGitHubRemote('https://github.com/example-org/tools.git'), /must use SSH/);
   assert.throws(() => parseGitHubRemote('git@example.com:group/subgroup/repo.git'));
 });
 
@@ -115,7 +113,7 @@ test('publishes only the ticket branch and creates a PR with the requested files
   const gitCalls = [];
   const ghCalls = [];
   const repo = {
-    org: 'briskhaven', repo: 'api', branch: 'ticket', path: '/tmp/api', bodyFile: '/tmp/api-body.md',
+    org: 'example-org', repo: 'api', branch: 'ticket', path: '/tmp/api', bodyFile: '/tmp/api-body.md',
   };
   const result = publishRepo(repo, { base: 'develop', draft: true }, {
     env: { GH_TOKEN: 'secret' }, token: 'secret',
@@ -124,10 +122,10 @@ test('publishes only the ticket branch and creates a PR with the requested files
     run: (command, args, options) => {
       ghCalls.push({ command, args, options });
       if (args[0] === 'api') return '[]';
-      return 'https://github.com/briskhaven/api/pull/42';
+      return 'https://github.com/example-org/api/pull/42';
     },
   });
-  assert.deepEqual(result, { url: 'https://github.com/briskhaven/api/pull/42', created: true });
+  assert.deepEqual(result, { url: 'https://github.com/example-org/api/pull/42', created: true });
   assert.deepEqual(gitCalls[0].args, ['push', '--set-upstream', 'origin', 'ticket:ticket']);
   assert.ok(ghCalls[0].args.includes('base=develop'));
   assert.ok(ghCalls[1].args.includes('/tmp/api-body.md'));
@@ -137,39 +135,39 @@ test('publishes only the ticket branch and creates a PR with the requested files
 test('reports an existing open PR without creating a duplicate', () => {
   const ghCalls = [];
   const result = publishRepo({
-    org: 'briskhaven', repo: 'api', branch: 'ticket', path: '/tmp/api', bodyFile: '/tmp/body.md',
+    org: 'example-org', repo: 'api', branch: 'ticket', path: '/tmp/api', bodyFile: '/tmp/body.md',
   }, { base: 'main', draft: false }, { env: {}, token: 'secret' }, {
     git: () => '',
     run: (_command, args) => {
       ghCalls.push(args);
       return JSON.stringify([{
-        html_url: 'https://github.com/briskhaven/api/pull/7',
-        head: { ref: 'ticket', repo: { full_name: 'briskhaven/api' } },
+        html_url: 'https://github.com/example-org/api/pull/7',
+        head: { ref: 'ticket', repo: { full_name: 'example-org/api' } },
         base: { ref: 'main' },
       }]);
     },
   });
-  assert.deepEqual(result, { url: 'https://github.com/briskhaven/api/pull/7', created: false });
+  assert.deepEqual(result, { url: 'https://github.com/example-org/api/pull/7', created: false });
   assert.equal(ghCalls.length, 1);
 });
 
 test('does not mistake a same-named fork branch for this repository branch', () => {
   const ghCalls = [];
   const result = publishRepo({
-    org: 'briskhaven', repo: 'api', branch: 'ticket', path: '/tmp/api', bodyFile: '/tmp/body.md',
+    org: 'example-org', repo: 'api', branch: 'ticket', path: '/tmp/api', bodyFile: '/tmp/body.md',
   }, { base: 'main', draft: false }, { env: {}, token: 'secret' }, {
     git: () => '',
     run: (_command, args) => {
       ghCalls.push(args);
       if (args[0] === 'api') return JSON.stringify([{
-        html_url: 'https://github.com/briskhaven/api/pull/6',
+        html_url: 'https://github.com/example-org/api/pull/6',
         head: { ref: 'ticket', repo: { full_name: 'someone/api-fork' } },
         base: { ref: 'main' },
       }]);
-      return 'https://github.com/briskhaven/api/pull/8';
+      return 'https://github.com/example-org/api/pull/8';
     },
   });
-  assert.deepEqual(result, { url: 'https://github.com/briskhaven/api/pull/8', created: true });
+  assert.deepEqual(result, { url: 'https://github.com/example-org/api/pull/8', created: true });
   assert.equal(ghCalls.length, 2);
 });
 

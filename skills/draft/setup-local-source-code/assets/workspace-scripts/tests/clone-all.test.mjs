@@ -1,15 +1,13 @@
+import './helpers/test-config.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { main, parseArgs } from '../clone-all.mjs';
-import * as workspaceConfig from '../lib/wt-config.mjs';
-const { identities, orgIdentity } = workspaceConfig;
-const defaultIdentity = workspaceConfig.defaultIdentity ?? 'default';
+import { identityFor } from '../lib/wt-config.mjs';
 
-const profile = defaultIdentity;
-const identity = identities[profile];
+const profile = 'personal';
+const identity = identityFor(profile);
 const user = identity.ghUser;
-const org = Object.entries(orgIdentity)
-  .find(([, identityId]) => identityId === profile)?.[0] ?? 'portable-test-org';
+const org = 'exampleorg';
 const repo = (name) => ({ name, owner: { login: org } });
 
 function fixture({ argv = [], existing = [] } = {}) {
@@ -55,7 +53,7 @@ test('clones every listed repository with the routed SSH identity', () => {
   const result = fixture({ argv: ['--profile', profile] });
   assert.equal(result.status, 0);
   assert.deepEqual(result.clones.map(({ name }) => name), ['first', 'second']);
-  assert.ok(result.clones.every(item => item.identity === identity));
+  assert.ok(result.clones.every(item => item.identity.id === identity.id));
 
   const endpoints = result.calls
     .filter(({ args }) => args[0] === 'api')

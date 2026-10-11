@@ -6,13 +6,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { resolveIdentity } from './lib/wt-config.mjs';
+import { DEFAULT_HOST, hostConfig, isConfiguredHost, resolveIdentity } from './lib/wt-config.mjs';
+import { forgejoApi, verifyForgejoIdentity } from './lib/forgejo-api.mjs';
 import {
   assertSafeSegment,
   assertNoCaseCollisions,
   getPrimaryRepoDirFromWorktree,
   git,
   listTicketFolders,
+  isAdditionalHost,
+  originMatches,
   REPOS_ROOT,
   runCmd,
   ticketPath,
@@ -39,7 +42,9 @@ Other options:
   -h, --help  Show this help.
 
 The current branch in every repo must equal {ticket}, every worktree must be
-clean, and origin must use the SSH host routed for its GitHub organization.
+clean, and origin must use the SSH host (or a configured alias) of the account
+routed to its owner. GitHub and configured additional hosts (such as Forgejo)
+are detected from each repository's origin.
 Existing open PRs for the same head/base pair are reported rather than duplicated.
 This command never fetches or merges pull requests.`;
 }
@@ -115,9 +120,10 @@ export function parseGitHubRemote(remoteUrl) {
   let host;
   let pathname;
   let transport;
-  const scp = remoteUrl.match(/^[^@\s]+@([^:\s]+):(.+)$/);
+  const scp = remoteUrl.match(/^[^@:/\s]+@([^:\s]+):(.+)$/);
   if (scp) {
     [, host, pathname] = scp;
+    if (!remoteUrl.startsWith('git@')) throw new Error('Origin SSH user must be git.');
     transport = 'ssh';
   } else {
     let parsed;
@@ -125,13 +131,17 @@ export function parseGitHubRemote(remoteUrl) {
     catch { throw new Error(`Unsupported origin URL: ${remoteUrl}`); }
     if (parsed.protocol !== 'ssh:') throw new Error(`Origin must use SSH, not ${parsed.protocol || 'an unknown protocol'}: ${remoteUrl}`);
     host = parsed.hostname;
+    if (parsed.username !== 'git') throw new Error('Origin SSH user must be git.');
+    const expectedPort = isConfiguredHost(host) ? hostConfig(host).sshPort : 22;
+    if (parsed.port && Number(parsed.port) !== expectedPort) throw new Error(`Unexpected SSH port for ${host}.`);
     pathname = parsed.pathname.replace(/^\//, '');
     transport = 'ssh';
   }
 
+  host = host.toLowerCase();
   const parts = pathname.replace(/\/$/, '').replace(/\.git$/, '').split('/');
   if (parts.length !== 2 || parts.some((part) => !part)) {
-    throw new Error(`Origin must identify one GitHub org/repo: ${remoteUrl}`);
+    throw new Error(`Origin must identify one owner/repo: ${remoteUrl}`);
   }
   return { transport, host, org: parts[0], repo: parts[1] };
 }
@@ -198,16 +208,20 @@ function preflightRepo(repoEntry, ticket, bodyFile, deps = {}) {
   const reposRoot = path.resolve(deps.reposRoot ?? REPOS_ROOT);
   const relativePrimary = path.relative(reposRoot, path.resolve(primaryDir));
   const primaryParts = relativePrimary.split(path.sep);
-  if (path.isAbsolute(relativePrimary) || primaryParts.length !== 2 || primaryParts.includes('..') ||
-      !same(primaryParts[0], remote.org) || !same(primaryParts[1], remote.repo)) {
+  const additional = isAdditionalHost(remote.host);
+  const ownerIndex = additional ? 1 : 0;
+  if (path.isAbsolute(relativePrimary) || primaryParts.length !== (additional ? 3 : 2) || primaryParts.includes('..') ||
+      (additional && !same(primaryParts[0], remote.host)) ||
+      !same(primaryParts[ownerIndex], remote.org) || !same(primaryParts[ownerIndex + 1], remote.repo)) {
     throw new Error(
       `${repoEntry.repo} origin ${remote.org}/${remote.repo} does not match its primary clone under ${reposRoot}.`
     );
   }
-  const identity = resolveIdentity(remote.org);
-  if (!same(remote.host, identity.sshHost)) {
+  const identity = resolveIdentity(remote.org, additional ? remote.host : DEFAULT_HOST);
+  if (!originMatches(remoteUrl, remote.org, remote.repo, identity)) {
     throw new Error(
-      `${remote.org}/${remote.repo} origin uses host "${remote.host}"; expected routed SSH host "${identity.sshHost}".`
+      `${remote.org}/${remote.repo} origin uses host "${remote.host}"; expected the ${identity.id} account's SSH host ` +
+        `"${identity.sshHost}"${identity.sshHostAliases?.length ? ` or an alias (${identity.sshHostAliases.join(', ')})` : ''}.`
     );
   }
   return { ...repoEntry, ...remote, branch, bodyFile, identity };
@@ -238,6 +252,7 @@ function runGh(args, repo, auth, run = runCmd) {
 }
 
 export function publishRepo(repo, options, auth, deps = {}) {
+  if (repo.identity?.provider === 'forgejo') return publishForgejoRepo(repo, options, deps);
   const gitFn = deps.git ?? git;
   const run = deps.run ?? runCmd;
   gitFn(['push', '--set-upstream', 'origin', `${repo.branch}:${repo.branch}`], { cwd: repo.path });
@@ -260,6 +275,34 @@ export function publishRepo(repo, options, auth, deps = {}) {
   const url = output.match(/https:\/\/github\.com\/[^\s]+\/pull\/\d+/)?.[0];
   if (!url) throw new Error(`GitHub created a PR but did not return a recognizable URL. Output: ${output}`);
   return { url, created: true };
+}
+
+export function publishForgejoRepo(repo, options, deps = {}) {
+  const gitFn = deps.git ?? git;
+  const api = deps.forgejoApi ?? forgejoApi;
+  const selector = `${repo.org}/${repo.repo}`;
+  const route = `repos/${encodeURIComponent(repo.org)}/${encodeURIComponent(repo.repo)}/pulls`;
+  // Resolve the first commit before pushing; a missing base or empty branch
+  // must fail without remote mutation. This command deliberately never fetches.
+  const first = gitFn(['rev-list', '--reverse', `origin/${options.base}..HEAD`], { cwd: repo.path }).split('\n')[0];
+  if (!first) throw new Error(`No commits ahead of origin/${options.base} for ${selector}.`);
+  const title = gitFn(['show', '-s', '--format=%s', first], { cwd: repo.path });
+  gitFn(['push', '--set-upstream', 'origin', `${repo.branch}:${repo.branch}`], { cwd: repo.path });
+  for (let page = 1; ; page++) {
+    const query = new URLSearchParams({ state: 'open', head: repo.branch, base: options.base, limit: '50', page: String(page) });
+    const pulls = api(repo.host, `${route}?${query}`, 'GET', undefined, repo.identity?.login);
+    const existing = pulls.find(pull => pull && same(pull.head?.repo?.full_name, selector) &&
+      pull.head?.ref === repo.branch && pull.base?.ref === options.base);
+    if (existing) return { url: existing.html_url, created: false };
+    if (pulls.length < 50) break;
+  }
+  const pull = api(repo.host, route, 'POST', {
+    head: repo.branch, base: options.base,
+    title: options.draft ? `[WIP] ${title}` : title,
+    body: fs.readFileSync(repo.bodyFile, 'utf8'),
+  }, repo.identity?.login);
+  if (!pull.html_url?.startsWith(`https://${repo.host}/`)) throw new Error('Forgejo did not return an expected PR URL.');
+  return { url: pull.html_url, created: true };
 }
 
 export function main(argv = process.argv.slice(2), deps = {}) {
@@ -285,7 +328,7 @@ export function main(argv = process.argv.slice(2), deps = {}) {
   const repos = ticket.repos.map((repo) =>
     preflightRepo(repo, options.ticket, bodies.get(repo.repo), deps));
 
-  const keys = repos.map(repo => `${repo.org}/${repo.repo}`.toLowerCase());
+  const keys = repos.map(repo => `${repo.host}/${repo.org}/${repo.repo}`.toLowerCase());
   if (new Set(keys).size !== keys.length) throw new Error('Duplicate repository identity in ticket.');
 
   if (options.dryRun) {
@@ -297,9 +340,15 @@ export function main(argv = process.argv.slice(2), deps = {}) {
   }
 
   const authByUser = new Map();
+  const authKey = identity => identity.provider === 'forgejo'
+    ? `${identity.sshHost}:${identity.forgejoUser}` : identity.ghUser;
   for (const repo of repos) {
-    if (!authByUser.has(repo.identity.ghUser)) {
-      authByUser.set(repo.identity.ghUser, (deps.verifiedAuth ?? verifiedAuth)(repo.identity, deps.run ?? runCmd));
+    const key = authKey(repo.identity);
+    if (!authByUser.has(key)) {
+      const auth = repo.identity.provider === 'forgejo'
+        ? verifyForgejoIdentity(repo.identity, deps.forgejoApi ?? forgejoApi)
+        : (deps.verifiedAuth ?? verifiedAuth)(repo.identity, deps.run ?? runCmd);
+      authByUser.set(key, auth);
     }
   }
 
@@ -308,7 +357,7 @@ export function main(argv = process.argv.slice(2), deps = {}) {
   for (const repo of repos) {
     try {
       const result = (deps.publishRepo ?? publishRepo)(
-        repo, options, authByUser.get(repo.identity.ghUser), deps);
+        repo, options, authByUser.get(authKey(repo.identity)), deps);
       links.push({ repo: `${repo.org}/${repo.repo}`, ...result });
       log(`${result.created ? 'CREATED' : 'EXISTS '} ${repo.org}/${repo.repo}: ${result.url}`);
     } catch (error) {

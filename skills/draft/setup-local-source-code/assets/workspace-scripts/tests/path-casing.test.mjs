@@ -1,41 +1,20 @@
+import './helpers/test-config.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync, spawnSync } from 'node:child_process';
-import { pathToFileURL, fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+import { FORGE_HOST } from './helpers/test-config.mjs';
+import { workspaceFixture } from './helpers/workspace-fixture.mjs';
 
-const assets = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
-const git = (cwd, ...args) => execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+let env;
+let git;
 async function fixture(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-casing-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const scripts = path.join(root, 'scripts');
-  fs.cpSync(assets, scripts, { recursive: true });
-  fs.writeFileSync(path.join(scripts, 'lib/wt-config.mjs'), `
-export const sourceRoot = ${JSON.stringify(root)};
-export const defaultIdentity = 'personal';
-export const identities = { personal: { ghUser: 'TestUser', gitUserName: 'Test User', gitUserEmail: 'test@example.invalid', sshHost: 'github.com', sshKeyPath: '~/.ssh/test' } };
-export const orgIdentity = {};
-export function resolveIdentity(org) { return org.toLowerCase().startsWith('ccsi') ? { ...identities.personal, ghUser: 'EmployerUser', sshHost: 'github.com-employer' } : identities.personal; }
-`);
-  const lib = await import(pathToFileURL(path.join(scripts, 'lib/wt-lib.mjs')));
-  function primary(org = 'ExampleOrg', name = 'Tools') {
-    const dir = path.join(root, 'repos', org, name);
-    fs.mkdirSync(dir, { recursive: true });
-    git(dir, 'init', '-b', 'main');
-    git(dir, 'config', 'user.name', 'Test User');
-    git(dir, 'config', 'user.email', 'test@example.invalid');
-    git(dir, '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', 'Initial');
-    git(dir, 'remote', 'add', 'origin', `git@github.com:${org}/${name}.git`);
-    git(dir, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
-    git(dir, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
-    return dir;
-  }
-  const command = (file, ...args) => spawnSync(process.execPath, [path.join(scripts, file), ...args], { env, encoding: 'utf8' });
-  return { root, scripts, lib, primary, command };
+  const f = await workspaceFixture(t);
+  ({ env, git } = f);
+  return f;
 }
 
 test('owner and repo casing reuse a legacy clone and its owner for new repos', async t => {
@@ -128,9 +107,9 @@ test('canonical metadata uses routed account, redacts failures and rejects redir
   const run = (cmd, args, options) => {
     calls.push({ args, env: options.env });
     if (args[0] === 'auth') { assert.equal(args.at(-1), 'EmployerUser'); return 'secret-test-token'; }
-    return JSON.stringify(args.at(-1) === 'user' ? { login: 'EmployerUser' } : { full_name: 'CCSI-Example/Tools' });
+    return JSON.stringify(args.at(-1) === 'user' ? { login: 'EmployerUser' } : { full_name: 'Employer-Example/Tools' });
   };
-  assert.deepEqual(f.lib.canonicalRepository('ccsi-example', 'tools', run), { org: 'CCSI-Example', repo: 'Tools' });
+  assert.deepEqual(f.lib.canonicalRepository('employer-example', 'tools', run), { org: 'Employer-Example', repo: 'Tools' });
   assert.equal(calls[0].env.GH_TOKEN, undefined);
   assert.equal(calls[1].env.GH_TOKEN, 'secret-test-token');
   assert.throws(() => f.lib.canonicalRepository('old', 'tools', (cmd, args) => {
@@ -244,4 +223,58 @@ if(args[0]==='clone') {
     const mod=await import(pathToFileURL(path.join(f.scripts,name)));
     assert.match(mod.cloneRepo('NEWORG','NEWREPO',{}),/^SKIP/);
   }
+});
+
+test('Forgejo and GitHub same-name clones stay distinct; all worktree operations recognize the host namespace', async t => {
+  const f = await fixture(t);
+  const github = f.primary();
+  const forgejo = f.primary('ExampleOrg', 'Tools', FORGE_HOST);
+  assert.equal(f.lib.repoPath('exampleorg', 'tools'), github);
+  assert.equal(f.lib.repoPath('exampleorg', 'tools', FORGE_HOST), forgejo);
+  const created = f.command('wt-create.mjs', 'exampleorg/tools', 'company', 'test-host', '--host', FORGE_HOST);
+  assert.equal(created.status, 0, created.stderr);
+  const wt = path.join(f.root, 'trees/company/test-host/Tools');
+  assert.equal(f.lib.validateManagedWorktree(wt), forgejo);
+  assert.equal(git(wt, 'config', 'user.email'), 'forge@example.invalid');
+  assert.match(git(wt, 'config', 'user.signingkey'), /test-forge$/);
+  assert.equal(f.lib.listPrimaryRepos().length, 2);
+  const rejected = f.command('wt-create.mjs', 'ExampleOrg/Tools', 'company', 'test-host');
+  assert.equal(rejected.status, 1);
+  assert.match(rejected.stderr, /not the requested registered worktree/);
+  assert.equal(f.command('wt-prune.mjs', '--force').status, 0);
+  assert.equal(fs.existsSync(wt), true);
+  assert.equal(f.command('wt-remove.mjs', 'company', 'test-host', 'Tools').status, 0);
+  assert.equal(fs.existsSync(wt), false);
+});
+
+test('Forgejo canonical lookup is account-checked and never invokes GitHub', async t => {
+  const f = await fixture(t);
+  const noGh = () => { throw new Error('GitHub must not be called'); };
+  const api = (host, route) => {
+    assert.equal(host, FORGE_HOST);
+    return route === 'user' ? { login: 'forgeuser' } : { full_name: 'ExampleOrg/Tools' };
+  };
+  assert.deepEqual(f.lib.canonicalRepository('exampleorg', 'tools', noGh, FORGE_HOST, api), { org: 'ExampleOrg', repo: 'Tools' });
+  assert.throws(() => f.lib.canonicalRepository('x', 'y', noGh, FORGE_HOST, () => ({ login: 'wrong' })), /identity mismatch/);
+  assert.throws(() => f.lib.repoPath('x','y','unknown.example'), /Unconfigured Git host/);
+  assert.throws(() => f.lib.takeHostOption(['--host','github.com','--host',FORGE_HOST]), /once/);
+});
+
+test('Forgejo nested owner/repo case collisions are rejected and audited', async t => {
+  const f = await fixture(t);
+  const dir = f.primary('ExampleOrg', 'Tools', FORGE_HOST);
+  fs.mkdirSync(path.join(path.dirname(dir), 'tools'));
+  assert.throws(() => f.lib.repoPath('ExampleOrg', 'Tools', FORGE_HOST), /Case collision/);
+  assert.equal(f.command('wt-audit-paths.mjs').status, 1);
+});
+
+
+test('configured SSH host aliases preserve owner and identity restrictions', async t => {
+  const f = await fixture(t);
+  const dir = f.primary('employer-team', 'Tools');
+  assert.throws(() => f.lib.repoPath('employer-team', 'Tools'), /Unexpected origin/);
+  git(dir, 'remote', 'set-url', 'origin', 'git@github-employer-legacy:employer-team/Tools.git');
+  assert.equal(f.lib.repoPath('employer-team', 'Tools'), dir);
+  git(dir, 'remote', 'set-url', 'origin', 'git@github-employer-legacy:OtherOrg/Tools.git');
+  assert.throws(() => f.lib.repoPath('employer-team', 'Tools'), /Unexpected origin/);
 });
