@@ -25,3 +25,9 @@ expose stored tokens, create real primary clones, push branches, or create PRs.
   creation/reuse.
 - `clone-mine`, `clone-all`, and `wt-pr-create` cover discovery, credential
   isolation, argument validation, and PR publishing.
+
+Fixtures canonicalize temporary paths so macOS `/var` aliases agree with Git's
+reported paths. Filesystem case sensitivity is detected in each fixture. Only
+checks that require two distinct case-variant directories are skipped on a
+case-insensitive volume; reuse, canonical spelling, origins and worktree checks
+still run. Run the suite on a case-sensitive volume to exercise collision checks.

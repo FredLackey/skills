@@ -26,6 +26,7 @@ test('owner and repo casing reuse a legacy clone and its owner for new repos', a
 
 test('ambiguity rejects even an exact match and split owners with disjoint repos', async t => {
   const f = await fixture(t);
+  if (!f.caseSensitive) return t.skip('Requires a case-sensitive filesystem for distinct case-variant directories');
   f.primary('ExampleOrg', 'Tools');
   const lower = path.join(f.root, 'repos/exampleorg');
   fs.mkdirSync(lower);
@@ -37,13 +38,19 @@ test('ambiguity rejects even an exact match and split owners with disjoint repos
   assert.equal(fs.existsSync(path.join(f.root, 'trees')), false);
 });
 
-test('repo-only variants, wrong origins, files and symlinks are rejected', async t => {
+test('repo-only case variants are rejected', async t => {
   const f = await fixture(t);
+  if (!f.caseSensitive) return t.skip('Requires a case-sensitive filesystem for distinct case-variant directories');
   const dir = f.primary();
   const other = path.join(path.dirname(dir), 'tools');
   fs.mkdirSync(other);
   assert.throws(() => f.lib.repoPath('ExampleOrg', 'Tools'), /Case collision/);
   fs.rmdirSync(other);
+});
+
+test('wrong origins, files and symlinks are rejected', async t => {
+  const f = await fixture(t);
+  const dir = f.primary();
   git(dir, 'remote', 'set-url', 'origin', 'git@github.com:OtherOrg/Tools.git');
   assert.throws(() => f.lib.repoPath('ExampleOrg', 'Tools'), /Unexpected origin/);
   fs.writeFileSync(path.join(path.dirname(dir), 'File'), 'occupied');
@@ -148,6 +155,7 @@ test('prune respects actual registrations when worktree basename differs in case
 
 test('bulk dry runs report ambiguous existing paths without creating a lock or clone', async t => {
   const f = await fixture(t);
+  if (!f.caseSensitive) return t.skip('Requires a case-sensitive filesystem for distinct case-variant directories');
   f.primary();
   fs.mkdirSync(path.join(f.root, 'repos/exampleorg'));
   for (const name of ['clone-all.mjs', 'clone-mine.mjs']) {
@@ -217,7 +225,7 @@ if(args[0]==='clone') {
   const result=spawnSync(process.execPath,[path.join(f.scripts,'wt-create.mjs'),'neworg/newrepo','client','TASK-2'],{env:{...env,PATH:bin+path.delimiter+env.PATH},encoding:'utf8'});
   assert.equal(result.status,0,result.stderr);
   assert.equal(fs.existsSync(path.join(f.root,'repos/NewOrg/NewRepo/.git')),true);
-  assert.equal(fs.existsSync(path.join(f.root,'repos/neworg')),false);
+  assert.deepEqual(fs.readdirSync(path.join(f.root, 'repos')).sort(), ['NewOrg', 'Seed']);
   assert.equal(git(path.join(f.root,'trees/client/TASK-2/NewRepo'),'branch','--show-current'),'TASK-2');
   for(const name of ['clone-all.mjs','clone-mine.mjs']) {
     const mod=await import(pathToFileURL(path.join(f.scripts,name)));
@@ -262,6 +270,7 @@ test('Forgejo canonical lookup is account-checked and never invokes GitHub', asy
 
 test('Forgejo nested owner/repo case collisions are rejected and audited', async t => {
   const f = await fixture(t);
+  if (!f.caseSensitive) return t.skip('Requires a case-sensitive filesystem for distinct case-variant directories');
   const dir = f.primary('ExampleOrg', 'Tools', FORGE_HOST);
   fs.mkdirSync(path.join(path.dirname(dir), 'tools'));
   assert.throws(() => f.lib.repoPath('ExampleOrg', 'Tools', FORGE_HOST), /Case collision/);

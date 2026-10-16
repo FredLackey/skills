@@ -9,11 +9,14 @@ import process from 'node:process';
 function usage() {
   return [
     'Usage:',
-    '  configure-ssh-identities.mjs --config-base64 <base64url-json> [--dry-run] [--replace] [--generate-missing-keys]',
+    '  configure-ssh-identities.mjs --config-base64 <base64url-json> [--dry-run] [--replace] [--generate-missing-keys] [--migrate-existing-hosts]',
     '',
     '--dry-run               Report changes without writing anything.',
     '--replace               Replace a conflicting managed SSH fragment.',
     '--generate-missing-keys Interactively run ssh-keygen for missing keys.',
+    '',
+    '--migrate-existing-hosts Move conflicting dedicated Host blocks into the managed fragment.',
+    '                         Preview first; requires sourceRoot for a quarantine backup.',
     '',
     'Private keys are never printed, copied, replaced, or sent to GitHub.',
   ].join('\n');
@@ -21,13 +24,14 @@ function usage() {
 
 function parseArgs(argv) {
   const options = {
-    configBase64: null, dryRun: false, replace: false, generateMissingKeys: false,
+    configBase64: null, dryRun: false, replace: false, generateMissingKeys: false, migrateExistingHosts: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === '--config-base64') options.configBase64 = argv[++index];
     else if (arg === '--dry-run') options.dryRun = true;
     else if (arg === '--replace') options.replace = true;
+    else if (arg === '--migrate-existing-hosts') options.migrateExistingHosts = true;
     else if (arg === '--generate-missing-keys') options.generateMissingKeys = true;
     else if (arg === '--help' || arg === '-h') options.help = true;
     else throw new Error(`Unknown argument: ${arg}\n\n${usage()}`);
@@ -166,20 +170,13 @@ function sshFragment(identities) {
  * with the same alias would silently be shadowed by (or shadow) our managed
  * fragment rather than cleanly conflict — surface it instead of guessing.
  */
-function findExternalHostConflicts(configContent, fragmentPath, identities) {
+function findExternalHostConflicts(configContent, identities) {
   const wanted = new Set(identities.flatMap((identity) =>
     [identity.sshHost, ...identity.sshHostAliases].map((alias) => alias.toLowerCase())));
   const conflicts = new Set();
-  let insideManagedFragment = false;
   for (const rawLine of configContent.split(/\r?\n/)) {
-    const includeMatch = rawLine.match(/^\s*Include\s+(.+?)\s*$/i);
-    if (includeMatch) {
-      insideManagedFragment = path.resolve(path.dirname(fragmentPath), '..', includeMatch[1]) === fragmentPath
-        || includeMatch[1].includes('local-source-code.conf');
-      continue;
-    }
     const hostMatch = rawLine.match(/^\s*Host\s+(.+?)\s*$/i);
-    if (!hostMatch || insideManagedFragment) continue;
+    if (!hostMatch) continue;
     for (const pattern of hostMatch[1].split(/\s+/)) {
       if (wanted.has(pattern.toLowerCase())) conflicts.add(pattern);
     }
@@ -187,29 +184,75 @@ function findExternalHostConflicts(configContent, fragmentPath, identities) {
   return [...conflicts];
 }
 
+/** Only dedicated, literal Host blocks may be migrated automatically. */
+function migrateHostBlocks(current, aliases) {
+  const wanted = new Set(aliases.map(alias => alias.toLowerCase()));
+  const blocks = current.split(/(?=^[ \t]*(?:Host|Match)[ \t]+)/im);
+  const removed = [];
+  const updated = blocks.map(block => {
+    const match = block.match(/^[ \t]*Host[ \t]+([^\r\n]+)/i);
+    if (!match) return block;
+    const patterns = match[1].split('#')[0].trim().split(/\s+/);
+    if (!patterns.some(pattern => wanted.has(pattern.toLowerCase()))) return block;
+    if (patterns.some(pattern => !wanted.has(pattern.toLowerCase())) || /^\s*Include\s/im.test(block)) {
+      throw new Error('Cannot migrate a shared Host block or one containing Include; split it manually first.');
+    }
+    removed.push(block.split('\n').filter(line => !/^\s*(?:#|$)/.test(line)).join('\n'));
+    // Retain comments and blank lines, including headings for the next block.
+    return block.split('\n').filter(line => /^\s*(?:#|$)/.test(line)).join('\n');
+  }).join('');
+  return { updated, removed };
+}
+
 function ensureFragment(identities, options) {
   const sshDirectory = path.join(os.homedir(), '.ssh');
   const includeDirectory = path.join(sshDirectory, 'config.d');
   const fragmentPath = path.join(includeDirectory, 'local-source-code.conf');
   const configPath = path.join(sshDirectory, 'config');
-  const current = pathExists(configPath) ? fs.readFileSync(configPath, 'utf8') : '';
-  const conflicts = findExternalHostConflicts(current, fragmentPath, identities);
-  if (conflicts.length) {
+  const original = pathExists(configPath) ? fs.readFileSync(configPath, 'utf8') : '';
+  let current = original;
+  const conflicts = findExternalHostConflicts(current, identities);
+  if (conflicts.length && !options.migrateExistingHosts) {
     throw new Error(
       `Conflict: ${configPath} already declares Host ${conflicts.join(', ')} ` +
       `outside the managed config.d/local-source-code.conf fragment. ssh_config uses the first ` +
-      'match, so adding the managed fragment would silently shadow (or be shadowed by) that ' +
-      'existing block. Remove or migrate the conflicting Host block by hand, then rerun.',
+      'match. Preview --migrate-existing-hosts to back up and migrate dedicated blocks, ' +
+      'or split shared blocks manually first.',
     );
+  }
+  if (conflicts.length) {
+    if (!options.sourceRoot) throw new Error('--migrate-existing-hosts requires sourceRoot in the setup object.');
+    const migration = migrateHostBlocks(original, conflicts);
+    current = migration.updated;
+    console.log(`MIGRATE Host ${conflicts.join(', ')} from ${configPath}`);
+    console.log('--- existing SSH config blocks');
+    console.log(migration.removed.join('\n\n'));
+    console.log('+++ managed SSH fragment');
+    console.log(sshFragment(identities).trimEnd());
+    console.log(`BACKUP  SSH config and any managed fragment under ${path.join(options.sourceRoot, 'quarantine')}`);
   }
   const expected = sshFragment(identities);
   const exists = pathExists(fragmentPath);
+  if (exists && fs.readFileSync(fragmentPath, 'utf8') !== expected && !options.replace) {
+    throw new Error(`Conflict: ${fragmentPath} differs. Review it before using --replace.`);
+  }
+  const includePattern = /^\s*Include\s+(?:~\/\.ssh\/)?config\.d\/\*\s*$/im;
+  const needsBackup = conflicts.length || (original && !includePattern.test(original)) || (exists && fs.readFileSync(fragmentPath, 'utf8') !== expected);
+  if (needsBackup && !options.sourceRoot) throw new Error('Changing existing SSH configuration requires sourceRoot for quarantine.');
+  if (needsBackup) console.log(`BACKUP  Existing SSH configuration under ${path.join(options.sourceRoot, 'quarantine')}`);
+  if (!options.dryRun && needsBackup) {
+    const quarantine = path.join(options.sourceRoot, 'quarantine');
+    fs.mkdirSync(quarantine, { recursive: true });
+    const backup = fs.mkdtempSync(path.join(quarantine, `${new Date().toISOString().slice(0, 10)}-ssh-migration-`));
+    fs.writeFileSync(path.join(backup, 'config'), original, { mode: 0o600 });
+    if (exists) fs.copyFileSync(fragmentPath, path.join(backup, 'local-source-code.conf'));
+    fs.writeFileSync(path.join(backup, 'README.md'),
+      'SSH configuration preserved before approved migration/replacement. config came from ~/.ssh/config; local-source-code.conf, if present, came from ~/.ssh/config.d/. Restore together after reviewing the Include. No private keys were copied.\n');
+    console.log(`BACKUP  ${backup}`);
+  }
   if (exists && fs.readFileSync(fragmentPath, 'utf8') === expected) {
     console.log(`KEEP    ${fragmentPath}`);
   } else {
-    if (exists && !options.replace) {
-      throw new Error(`Conflict: ${fragmentPath} differs. Review it before using --replace.`);
-    }
     console.log(`${exists ? 'REPLACE' : 'CREATE '} ${fragmentPath}`);
     if (!options.dryRun) {
       fs.mkdirSync(includeDirectory, { recursive: true, mode: 0o700 });
@@ -218,15 +261,14 @@ function ensureFragment(identities, options) {
     }
   }
 
-  const includePattern = /^\s*Include\s+(?:~\/\.ssh\/)?config\.d\/\*\s*$/im;
-  if (includePattern.test(current)) {
+  if (includePattern.test(current) && current === original) {
     console.log(`KEEP    ${configPath} includes config.d/*`);
     return;
   }
   console.log(`${current ? 'UPDATE ' : 'CREATE '} ${configPath} with Include config.d/*`);
   if (!options.dryRun) {
     fs.mkdirSync(sshDirectory, { recursive: true, mode: 0o700 });
-    fs.writeFileSync(configPath, `Include config.d/*\n${current ? `\n${current}` : ''}`, { mode: 0o600 });
+    fs.writeFileSync(configPath, includePattern.test(current) ? current : `Include config.d/*\n${current ? `\n${current}` : ''}`, { mode: 0o600 });
     fs.chmodSync(configPath, 0o600);
   }
 }
@@ -237,6 +279,10 @@ try {
     console.log(usage());
   } else {
     const identities = readIdentities(options.configBase64);
+    const input = JSON.parse(Buffer.from(options.configBase64, 'base64url').toString('utf8'));
+    options.sourceRoot = input.sourceRoot ? expandHome(input.sourceRoot) : null;
+    // Validate the complete SSH plan before generating keys or writing files.
+    if (!options.dryRun) ensureFragment(identities, { ...options, dryRun: true });
     ensureKeys(identities, options);
     ensureFragment(identities, options);
     console.log(options.dryRun ? 'Dry run complete; no files were changed.' : 'SSH identity setup complete.');

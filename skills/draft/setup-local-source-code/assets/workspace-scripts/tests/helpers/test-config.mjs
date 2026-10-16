@@ -53,6 +53,6 @@ export function installTestConfig(root, config = testConfig(root)) {
   return { file, env: { ...process.env, ...env } };
 }
 
-export const TEST_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-test-config-'));
+export const TEST_ROOT = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wt-test-config-')));
 export const TEST = installTestConfig(TEST_ROOT);
 process.on('exit', () => fs.rmSync(TEST_ROOT, { recursive: true, force: true }));

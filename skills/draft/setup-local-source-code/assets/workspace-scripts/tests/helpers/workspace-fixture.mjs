@@ -11,7 +11,7 @@ import { installTestConfig, testConfig } from './test-config.mjs';
 const assets = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 export async function workspaceFixture(t, { config, installSigning = true } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-workspace-'));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wt-workspace-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const scripts = path.join(root, 'scripts');
   fs.cpSync(assets, scripts, { recursive: true });
@@ -35,5 +35,9 @@ export async function workspaceFixture(t, { config, installSigning = true } = {}
     git(dir, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
     return dir;
   }
-  return { root, scripts, configFile, env, git, command, lib, importScript, primary };
+  const probe = path.join(root, 'case-probe');
+  fs.writeFileSync(probe, '');
+  const caseSensitive = !fs.existsSync(path.join(root, 'CASE-PROBE'));
+  fs.unlinkSync(probe);
+  return { caseSensitive, root, scripts, configFile, env, git, command, lib, importScript, primary };
 }

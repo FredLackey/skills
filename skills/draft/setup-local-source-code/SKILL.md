@@ -1,6 +1,6 @@
 ---
 name: setup-local-source-code
-description: Set up, update, or reconfigure a portable local source-code workspace organized around primary clones, task worktrees, local-only projects, helper scripts, and durable research. Only invoke this skill when the user explicitly asks to set up, initialize, update, or reconfigure this workspace pattern by name — never infer it automatically from ordinary repository, cloning, or worktree requests. Interview the user before making changes. Do not use for ordinary repository cloning or worktree creation after the workspace is configured.
+description: Set up, update, or reconfigure a portable local source-code workspace organized around primary clones, task worktrees, local-only projects, helper scripts, and durable research. Only invoke this skill when the user explicitly asks to set up, initialize, update, or reconfigure this workspace pattern by name — never infer it automatically from ordinary repository, cloning, or worktree requests. Inspect existing settings read-only, then confirm a consolidated setup plan before making changes. Do not use for ordinary repository cloning or worktree creation after the workspace is configured.
 ---
 
 # Setup Local Source Code
@@ -32,8 +32,10 @@ user asks why the workspace works the way it does.
 
 ## Interview First
 
-Before reading local GitHub state or changing any files, interview the user and
-collect:
+Read-only inspection may precede the interview: use the inventory script and
+inspect SSH configuration (never private keys or tokens) to identify reusable
+accounts, aliases and conflicts. Do not make changes during this inspection.
+Collect missing information in one interview, retaining values already supplied:
 
 - The developer's proper name and the Git author name to use for each work
   context when those differ.
@@ -54,15 +56,19 @@ collect:
 - Whether the default `~/Source` root is acceptable.
 
 Do not ask for a GitHub username, a filesystem-safe identifier, an SSH key
-path/host alias, or organization names — these are suggested or discovered
-later in this workflow, never typed in blind:
+path/host alias, or organization names as free-text questions — propose naming
+values during the interview and discover accounts/organizations through scripts:
 
 - For each client, derive a short, filesystem-safe identifier by
   kebab-casing the client name (e.g. "Acme Corp" → `acme-corp`, shortened to
-  `acme` when unambiguous) and propose it, `~/.ssh/github-{identifier}`, and
-  the SSH host alias (`github.com` for at most one GitHub identity, otherwise
-  `github.com-{identifier}`) as a suggestion. Let the user confirm or override
-  every suggested value; never apply one without confirmation.
+  `acme` when unambiguous). Propose the account ID, SSH key path, and host
+  alias together in one table so their roles are clear. Key filenames use
+  `id-{identifier}`, never a `github-` prefix. If the confirmed ID already
+  starts with `id-`, use it as-is: both `personal` and `id-personal` suggest
+  `~/.ssh/id-personal`, never `id-id-personal`. The alias remains host-specific:
+  `github.com` for at most one GitHub identity, otherwise `github.com-{identifier}`.
+  These are suggestions; confirm or accept overrides together. Existing keys
+  are never renamed or replaced just to follow the new naming convention.
 - The GitHub username and the organizations routed to each identity are
   discovered from that identity's own GitHub CLI login later in this
   workflow (see Script-Only Execution), never asked for directly.
@@ -75,8 +81,22 @@ organization, or someone else's public repository) is added with
 belongs to. Never infer that two clients may share an identity, email, or key.
 Never include one client's credentials or access in another client's route.
 
-Confirm the resulting mapping with the user, including every suggested and
-discovered value, before encoding it into configuration.
+Confirm the resulting mapping, including suggested and discovered values,
+before writing configuration. Treat an answer to one interview item as an
+answer to that item; ask only for unresolved values. Flag likely email typos
+without silently correcting them. Preserve supplied profile names as expected
+logins and verify them against authentication rather than asking again.
+
+Bundle related approvals around concrete previews: one SSH plan, account
+login/key-registration actions, and the final workspace/signing plan. Approval
+may cover multiple accounts and discovered organizations when their scope is
+clear. Remember prior authorization and do not ask again for unchanged actions;
+ask only for new conflicts, replacements, exclusions, or permissions. Never
+interpret silence or a partial answer as approval of unrelated items.
+
+Explain upfront that setup installs a workspace layout and tools; it does not
+move existing source folders or clone repositories. Report existing folders
+outside the managed layout as preserved, with migration a separate task.
 
 ## Script-Only Execution
 
@@ -94,18 +114,24 @@ includes, and do not run direct GitHub commands as a substitute.
    check keys, host aliases, ports, and the managed SSH configuration fragment.
    If keys are missing, add `--generate-missing-keys`; key generation prompts
    interactively for a passphrase and never accepts one in an argument.
-3. After the user approves the SSH plan, run it without `--dry-run`. Use
-   `--replace` only when they approve replacing the managed fragment.
+3. Present the SSH preview including key generation, fragment and Include
+   changes. If dedicated Host blocks conflict, preview the same command with
+   `--migrate-existing-hosts`; it shows removed directives, the new fragment,
+   and a quarantine backup plan using the setup object's `sourceRoot`.
+   After approval, apply the same command. Shared blocks or blocks containing
+   Include require manual splitting with backup and explicit approval; never
+   remove unrelated hosts. Use `--replace` only for approved fragment replacements.
 4. Run `scripts/github-accounts.mjs inventory` to inspect locally authenticated
    GitHub accounts without revealing tokens.
-5. For each GitHub identity that isn't already logged in, obtain confirmation
-   and run `scripts/github-accounts.mjs login`. It requests the key-management
+5. For each GitHub identity that isn't already logged in, use the approved
+   account-change plan (or obtain missing authorization) and run
+   `scripts/github-accounts.mjs login`. It requests the key-management
    scopes, configures `gh` to use SSH, deliberately skips automatic key upload
    so registration remains deterministic, and prints the GitHub username of
    the account that just authenticated — read that back as the identity's
    `login` rather than asking the user to type it. For an existing account
-   lacking the required scopes, use `refresh-scopes --user <user>` after
-   confirmation.
+   lacking the required scopes, use `refresh-scopes --user <user>` with
+   authorization from that plan or a new confirmation.
 6. For every GitHub identity, run
    `scripts/github-accounts.mjs discover-orgs --user <user>`. It is read-only
    and lists every organization that login currently belongs to. Present the
@@ -113,7 +139,8 @@ includes, and do not run direct GitHub commands as a substitute.
    to this client's routing before it becomes that identity's `orgs`. Two
    identities must never claim the same organization — surface it immediately
    if discovery returns an overlap.
-7. For every GitHub identity, obtain confirmation and run `github-accounts.mjs`
+7. For every GitHub identity, use the approved account-change plan (or obtain
+   missing authorization) and run `github-accounts.mjs`
    with `ensure-keys --user <user> --public-key <path.pub> --title <title>`.
    This is mandatory: it idempotently registers the same public key as both an
    authentication key and an SSH signing key, then reads both GitHub key lists
@@ -130,7 +157,9 @@ includes, and do not run direct GitHub commands as a substitute.
    `0600`, containing `host`, `username`, and `token`). Never read, print, or
    copy the token yourself. The user supplies that account's `login` and
    owners (organizations) to route.
-10. Encode the setup object as Base64URL JSON using the schema in the
+10. Inspect top-level workspace directories read-only and report existing
+    source folders outside the managed layout as preserved; do not migrate them.
+    Encode the setup object as Base64URL JSON using the schema in the
     reference, now complete with every identity's discovered `login` and
     `orgs`. Run `scripts/setup-local-source-code.mjs --config-base64 <value>
     --dry-run` and present any conflicts or replacements before changing files.
@@ -174,13 +203,20 @@ identity settings are reported as `DRIFT` until the user approves
 
 After setup or an update:
 
+- Run setup-script regression checks with `node --test scripts/tests/*.test.mjs`
+  from the skill directory when modifying setup scripts.
 - Run each installed `wt-*.mjs` command and both clone commands with `--help`.
-- Run `node --test scripts/tests/*.test.mjs` from the workspace root. The tests
-  use temporary configuration and never read the user's.
+- Run `node --test scripts/tests/*.test.mjs` from the workspace root. Tests
+  use temporary configuration and never read the user's. Fixtures canonicalize
+  temporary paths and detect filesystem case sensitivity. Report skips for
+  distinct case-variant directory checks separately from passes and failures;
+  use a case-sensitive volume when those checks must run.
 - Confirm `wt-pr-create.mjs --dry-run` can validate a prepared ticket without
   authenticating, pushing branches, or creating pull requests.
-- Confirm each GitHub account has the selected key registered for both SSH
-  authentication and SSH signing.
+- Report login health and selected authentication/signing key registration
+  separately. Registration does not prove the author email is verified. Check
+  email verification only with authorized access; otherwise report it as
+  unverified by this setup, since verified commit badges depend on it.
 - Run `wt-enforce-signing.mjs --dry-run` and confirm every primary clone
   resolves to its routed identity: name, email, key, `gpg.format=ssh`, and
   required commit and tag signing.
@@ -199,6 +235,9 @@ After setup or an update:
 ## Safety
 
 - Never expose GitHub or Forgejo tokens or private-key contents.
+- Keep interview responses, discovered organizations, workstation paths and
+  migration logs out of skill source, examples, test fixtures and commits.
+  Use synthetic identities and reserved example domains in maintained files.
 - Never place tokens, private keys, or personal configuration inside the source
   workspace.
 - Do not create repositories, delete repositories, push commits, or change

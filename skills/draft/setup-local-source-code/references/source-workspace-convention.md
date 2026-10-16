@@ -79,7 +79,7 @@ workspace:
       "gitEmail": "developer@example.com",
       "sshHost": "github.com",
       "sshHostAliases": [],
-      "sshKeyPath": "~/.ssh/github-personal"
+      "sshKeyPath": "~/.ssh/id-personal"
     },
     "company": {
       "label": "Company forge",
@@ -88,7 +88,7 @@ workspace:
       "gitName": "Developer Name",
       "gitEmail": "developer@company.example",
       "sshHost": "git.example.com",
-      "sshKeyPath": "~/.ssh/company-forge"
+      "sshKeyPath": "~/.ssh/id-company"
     }
   },
   "routes": {
@@ -98,7 +98,11 @@ workspace:
 }
 ```
 
-Values shown are placeholders, not defaults.
+Values shown are placeholders, not defaults. Suggest SSH key filenames as
+`id-{identifier}` with no `github-` prefix; if an ID already starts with `id-`,
+do not add it again. Account IDs and SSH aliases are separate values. Confirm
+the proposed mapping together; preserve existing key names unless migration
+is explicitly approved.
 
 - `settings.commitAndPush` — when `true`, agents commit and push every
   multi-file change and run the post-push check; when `false`, only on request.
@@ -277,7 +281,7 @@ account login and organization discovery, not from typing during the interview:
       "login": "github-user",
       "sshHost": "github.com",
       "sshHostAliases": [],
-      "sshKeyPath": "~/.ssh/github-personal",
+      "sshKeyPath": "~/.ssh/id-personal",
       "orgs": ["personal-org"]
     }
   ]
