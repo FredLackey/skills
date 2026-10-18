@@ -3,6 +3,26 @@
 Skills in this level are still in development and are not ready for general
 use.
 
+## `zulip-admin`
+
+Onboards human teammates and agents, provisions separate credentials and CLI
+profiles, and maintains account details, roles, and channel/group access.
+Checks for the latest Zulip CLI release at the start of each session.
+
+**Current state:** Initial lightweight draft. Command examples checked against
+CLI 0.0.2; practical skill usage is still being validated.
+See [Zulip Admin](zulip-admin/SKILL.md).
+
+## `zulip-user`
+
+Guides everyday human and agent communication: finding messages, DMs, channel
+topics, replies, attachments, and emoji reactions. Includes profile setup,
+session-start CLI updates, and basic recurring event handling.
+
+**Current state:** Initial lightweight draft. Command examples checked against
+CLI 0.0.2; practical skill usage is still being validated.
+See [Zulip User](zulip-user/SKILL.md).
+
 ## `setup-skills-repo`
 
 Creates or reorganizes a portable skills repository using draft, canary,

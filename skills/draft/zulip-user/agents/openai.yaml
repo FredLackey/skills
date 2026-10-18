@@ -1,0 +1,3 @@
+interface:
+  display_name: "Zulip User"
+  short_description: "Read, reply, share files, and react in Zulip"
