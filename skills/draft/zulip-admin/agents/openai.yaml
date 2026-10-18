@@ -1,0 +1,3 @@
+interface:
+  display_name: "Zulip Admin"
+  short_description: "Onboard people and agents and maintain Zulip access"
