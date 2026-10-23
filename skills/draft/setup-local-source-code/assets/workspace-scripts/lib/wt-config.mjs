@@ -223,7 +223,10 @@ export function normalizeConfig(raw) {
     if (
       parts.length !== 3 ||
       !hosts[parts[0].toLowerCase()] ||
-      !parts.slice(1).every((p) => SAFE_OWNER.test(p))
+      !SAFE_OWNER.test(parts[1]) ||
+      !/^[A-Za-z0-9._-]+$/.test(parts[2]) ||
+      parts[2] === '.' ||
+      parts[2].includes('..')
     )
       fail(`Invalid repository coordinate: ${coordinate}`);
     if (

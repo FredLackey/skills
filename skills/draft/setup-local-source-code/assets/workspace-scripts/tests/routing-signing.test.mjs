@@ -266,3 +266,40 @@ test('post-push verification retains strict skipped/mismatched exit codes and pr
     'Keep this work',
   );
 });
+
+test('dot-prefixed repository names support ownership routes and exact exceptions', (t) => {
+  const f = workspaceFixture(t, (c) => {
+    c.repositories['alpha.example/team/.github'] = 'personal';
+  });
+  const ordinary = f.repository('personalorg', '.github');
+  f.git(ordinary, 'verify-commit', 'HEAD');
+  const exception = f.repository('team', '.github');
+  assert.equal(
+    f.git(exception, 'config', 'user.email'),
+    'personal@example.test',
+  );
+  f.git(exception, 'verify-commit', 'HEAD');
+  f.git(
+    exception,
+    'remote',
+    'set-url',
+    'origin',
+    'ssh://git@alpha.example/team/.github.git',
+  );
+  f.git(exception, 'commit', '--allow-empty', '-m', 'Dot repository SSH URL');
+  f.git(exception, 'verify-commit', 'HEAD');
+  for (const name of ['.', '..', '../escape']) {
+    f.git(
+      exception,
+      'remote',
+      'set-url',
+      'origin',
+      'git@alpha.example:team/' + name + '.git',
+    );
+    assert.notEqual(
+      f.runGit(exception, ['commit', '--allow-empty', '-m', 'Invalid remote'])
+        .status,
+      0,
+    );
+  }
+});

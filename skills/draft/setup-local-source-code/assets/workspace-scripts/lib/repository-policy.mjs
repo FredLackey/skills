@@ -51,7 +51,7 @@ export function parseRemote(value) {
   if (
     parts.length !== 2 ||
     !parts.every(
-      (p) => /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(p) && !p.includes('..'),
+      (p) => /^[a-zA-Z0-9._-]+$/.test(p) && p !== '.' && !p.includes('..'),
     )
   )
     throw new Error('Remote must identify one owner/repository.');
