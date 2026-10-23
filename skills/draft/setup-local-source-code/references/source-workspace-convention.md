@@ -74,7 +74,7 @@ New hosted key titles must be `{Proper Machine Name} ({YYYYMMDD})`, using the ac
 
 ## Native Git and SSH policy
 
-The enforcer writes account identity files, `routes.gitconfig`, and `allowed_signers` beside the external configuration. It registers the policy as a global include after preserving the old configuration. The baseline selects SSH signatures and enables commit/tag signing, disables inferred author identity, and supplies no fallback author email or signing key. Account files provide the selected name/email/key. Existing historical trust entries are merged, not discarded.
+The enforcer writes account identity files, an executable signing launcher, `routes.gitconfig`, and `allowed_signers` beside the external configuration. It registers the policy as a global include after preserving the old configuration. The baseline selects SSH signatures and enables commit/tag signing, disables inferred author identity, and supplies no fallback author email or signing key. Account files provide the selected name/email/key. Existing historical trust entries are merged, not discarded.
 
 Native remote conditional includes cover raw stored SCP, `ssh://`, HTTPS and alias forms with explicit casing patterns. They match **any remote**, not only origin. Exact repository conditions follow owner rules. Because Git itself does not reject conflicting matches, `wt-sign.mjs` verifies the resolved identity and actual committer/tagger before delegating to `ssh-keygen`. It preserves legitimate original authors on replayed commits. Verification delegates to the standard SSH verifier.
 
@@ -82,7 +82,7 @@ Native remote conditional includes cover raw stored SCP, `ssh://`, HTTPS and ali
 
 Use `wt-identity.mjs show` to inspect selection. `bind {account}` adds an explicit local identity include and `source-workspace.identity` setting for remote-less or mixed-account repositories. This is the narrow exception to avoiding duplicated repository-local identity settings. Changing an existing binding requires deliberate review.
 
-SSH configuration is checked using effective `ssh -G` results from a projected configuration, including nested/scoped Includes, wildcard defaults and accumulated identity files. Refuse conflicts rather than relying on text-only matching. Key-pair correspondence is checked without printing private material. Optional `agentCaching` adds keys to an available agent after use; `useKeychain` enables supported keychain integration. Test fresh-session/GUI behavior where needed; an empty agent alone does not prove file-based authentication failure.
+SSH configuration is checked using effective `ssh -G` results from a projected configuration, including nested/scoped Includes, wildcard defaults and accumulated identity files. Refuse conflicts rather than relying on text-only matching. Key-pair correspondence is checked without printing private material. The machine-specific `settings.nodePath` records the executable discovered during setup (retaining its stable PATH entry rather than resolving its versioned install target). Generated signing and transport launchers use that absolute executable, so GUI-launched Git does not depend on shell startup files. Optional `agentCaching` adds keys to an available agent after use; `useKeychain` enables supported keychain integration. Test fresh-session/GUI behavior where needed; an empty agent alone does not prove file-based authentication failure.
 
 ## Helpers and completion
 

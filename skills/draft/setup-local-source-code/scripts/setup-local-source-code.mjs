@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from 'node:fs';
+import { nodeExecutable } from '../assets/workspace-scripts/lib/runtime.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -159,6 +160,7 @@ function buildWorkspaceConfig(input) {
       commitAndPush: input.settings.commitAndPush,
       agentCaching: input.settings.agentCaching === true,
       useKeychain: input.settings.useKeychain === true,
+      nodePath: nodeExecutable(input.settings.nodePath),
     },
     hosts: input.hosts ?? {},
     accounts,

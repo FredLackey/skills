@@ -12,6 +12,7 @@
 // owner is an error that names the command to add a route; nothing is guessed.
 
 import fs from 'node:fs';
+import { nodeExecutable } from './runtime.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -80,6 +81,11 @@ export function normalizeConfig(raw) {
     fail('sourceRoot must not contain quotes or backslashes.');
 
   const settings = { commitAndPush: false, ...(raw.settings ?? {}) };
+  settings.nodePath = nodeExecutable(
+    settings.nodePath
+      ? text(settings.nodePath, 'settings.nodePath')
+      : undefined,
+  );
   if (typeof settings.commitAndPush !== 'boolean')
     fail('settings.commitAndPush must be true or false.');
 

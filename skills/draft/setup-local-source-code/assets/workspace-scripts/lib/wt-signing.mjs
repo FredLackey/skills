@@ -47,11 +47,9 @@ export function expectedSettings(identity) {
     'commit.gpgsign': 'true',
     'tag.gpgsign': 'true',
     'user.useconfigonly': 'true',
-    'gpg.ssh.program': fileURLToPath(
-      new URL('../wt-sign.mjs', import.meta.url),
-    ),
+    'gpg.ssh.program': path.join(gitIncludeDir(), 'ssh-sign'),
     'gpg.ssh.allowedsignersfile': path.join(gitIncludeDir(), 'allowed_signers'),
-    'core.sshcommand': `${shellQuote(process.execPath)} ${shellQuote(fileURLToPath(new URL('../wt-ssh.mjs', import.meta.url)))}`,
+    'core.sshcommand': `${shellQuote(loadConfig().settings.nodePath)} ${shellQuote(fileURLToPath(new URL('../wt-ssh.mjs', import.meta.url)))}`,
     'ssh.variant': 'ssh',
   };
 }
@@ -82,8 +80,10 @@ export function renderWorkstationFiles() {
   const scripts = path.dirname(
     fileURLToPath(new URL('../wt-sign.mjs', import.meta.url)),
   );
-  const signer = path.join(scripts, 'wt-sign.mjs');
-  const transport = `${shellQuote(process.execPath)} ${shellQuote(path.join(scripts, 'wt-ssh.mjs'))}`;
+  const signer = path.join(dir, 'ssh-sign');
+  files[signer] =
+    `#!/bin/sh\nexec ${shellQuote(config.settings.nodePath)} ${shellQuote(path.join(scripts, 'wt-sign.mjs'))} "$@"\n`;
+  const transport = `${shellQuote(loadConfig().settings.nodePath)} ${shellQuote(path.join(scripts, 'wt-ssh.mjs'))}`;
   const trust = path.join(dir, 'allowed_signers');
   const previousTrust = gitOrNull([
     'config',
@@ -192,7 +192,9 @@ export function workstationStatus() {
         state:
           current === null
             ? 'create'
-            : current === content
+            : current === content &&
+                (file !== path.join(gitIncludeDir(), 'ssh-sign') ||
+                  fs.statSync(file).mode & 0o100)
               ? 'keep'
               : 'replace',
       };
@@ -240,8 +242,10 @@ export function writeWorkstationFiles({ register = false } = {}) {
   fs.mkdirSync(gitIncludeDir(), { recursive: true, mode: 0o700 });
   for (const entry of status.files) {
     if (entry.state === 'keep') continue;
-    fs.writeFileSync(entry.file, entry.content, { mode: 0o600 });
-    fs.chmodSync(entry.file, 0o600);
+    const mode =
+      entry.file === path.join(gitIncludeDir(), 'ssh-sign') ? 0o700 : 0o600;
+    fs.writeFileSync(entry.file, entry.content, { mode });
+    fs.chmodSync(entry.file, mode);
   }
   if (register && !status.registered) {
     fs.mkdirSync(path.dirname(globalFile), { recursive: true, mode: 0o700 });

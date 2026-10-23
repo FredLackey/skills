@@ -303,3 +303,37 @@ test('dot-prefixed repository names support ownership routes and exact exception
     );
   }
 });
+
+test('signing and verification work when PATH contains Git and SSH tools but no Node', (t) => {
+  const f = workspaceFixture(t);
+  const dir = f.repository();
+  const minimal = path.join(f.root, 'minimal-tools');
+  fs.mkdirSync(minimal);
+  for (const name of ['git', 'ssh-keygen']) {
+    const executable = f.env.PATH.split(path.delimiter)
+      .map((directory) => path.join(directory, name))
+      .find((file) => fs.existsSync(file));
+    assert.ok(executable, name);
+    fs.symlinkSync(executable, path.join(minimal, name));
+  }
+  const result = f.runGit(
+    dir,
+    ['commit', '--allow-empty', '-m', 'Minimal environment'],
+    { PATH: minimal },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    f.runGit(dir, ['verify-commit', 'HEAD'], { PATH: minimal }).status,
+    0,
+  );
+  assert.equal(
+    f.runGit(dir, ['tag', 'minimal-path', '-m', 'Minimal PATH tag'], {
+      PATH: minimal,
+    }).status,
+    0,
+  );
+  assert.equal(
+    f.runGit(dir, ['verify-tag', 'minimal-path'], { PATH: minimal }).status,
+    0,
+  );
+});
