@@ -1,219 +1,52 @@
 ---
 name: setup-local-source-code
-description: Set up, update, or reconfigure a portable local source-code workspace organized around primary clones, task worktrees, local-only projects, helper scripts, and durable research. Only invoke this skill when the user explicitly asks to set up, initialize, update, or reconfigure this workspace pattern by name — never infer it automatically from ordinary repository, cloning, or worktree requests. Interview the user before making changes. Do not use for ordinary repository cloning or worktree creation after the workspace is configured.
+description: Set up, update, or reconfigure a portable source-code workspace and native repository-selected Git/SSH identities. Invoke only when explicitly requested by name or when the user unambiguously requests this workspace setup; ordinary cloning and repository work do not invoke it.
 ---
 
 # Setup Local Source Code
 
-Only run this skill when the user directly and explicitly asks for it — by
-name, or by unambiguously asking to set up, update, or reconfigure this
-workspace pattern. Never invoke it automatically because a request merely
-mentions repositories, cloning, worktrees, or GitHub accounts; those are
-ordinary tasks this skill does not own once the workspace already exists.
+Read [the convention](references/source-workspace-convention.md) before configuring a workstation. Read [the rationale](references/workspace-rationale.md) when explaining the design. Use Node.js 24+, Git 2.36+, and OpenSSH with SSH signing support. Preserve existing user work.
 
-The skill carries no identity, client, organization, or machine-specific
-data, and neither do the files it installs. Everything personal lives in one
-JSON configuration file outside the workspace (see
-[the convention](references/source-workspace-convention.md#workspace-configuration)).
-The installed helpers and workspace guide are identical on every machine.
+## Required outcomes
 
-Read [references/source-workspace-convention.md](references/source-workspace-convention.md)
-before proposing changes, and
-[references/workspace-rationale.md](references/workspace-rationale.md) when the
-user asks why the workspace works the way it does.
+- Ordinary Git commands work independently of checkout location. Repository remote host/owner selects author name, email and SSH signing key; exact-repository exceptions override owner routes.
+- Enable SSH commit and tag signing globally. Unknown or conflicting identities stop signing. Never fix a key problem by disabling signing or selecting the first key in an agent.
+- Each persona/company uses `id_{persona-or-company}`, with matching `.pub`, for example `id_fredlackey`, `id_ccsi`, or `id_cisa`. Different identities use different keys; the same persona can reuse a key across hosts.
+- Registration titles are exactly `{Proper Machine Name} ({YYYYMMDD})`, using the actual local registration date. Reject names such as `macos`, `darwin`, `macos.local`, and equivalent generic values. Establish the proper machine name explicitly; never fall back to an OS identifier or hostname. Existing registrations retain their dates on reruns.
+- Treat all configured Git hosts equally: one workflow, command surface, naming/signing policy and `repos/{owner}/{repo}` convention. No provider-specific areas, headings or explanatory comments. API differences remain internal capabilities of the same tooling.
+- Personal and machine-specific configuration belongs outside the workspace at `$SOURCE_WORKSPACE_CONFIG`, default `~/.config/source-workspace/config.json`. Portable assets contain no personal values or secrets.
 
-## Choose the mode
+## Establish configuration
 
-- **New setup or reconfiguration:** follow Interview First and Script-Only
-  Execution below.
-- **Pulling an updated skill into an existing workspace:** follow
-  [Updating an Existing Workspace](#updating-an-existing-workspace). Do not
-  re-run the interview just to deploy new helpers.
+For new setup or reconfiguration, collect only missing values: the proper machine name; persona/company labels, author names and emails; key basenames; each host's endpoint and account login; approved owner routes and repository exceptions; workspace root; commit-and-push preference; and optional passphrase caching/keychain preference. Inventory existing key filenames and effective Git/SSH configuration before proposing new keys. Reuse approved existing keys where possible.
 
-## Interview First
+Confirm each identity and its routes. Do not infer an identity from an operating system, folder location, active API login, or key order. For repositories with remotes belonging to different identities, and repositories without remotes, establish an explicit repository identity. Credentials are account-scoped, including when multiple accounts use one host.
 
-Before reading local GitHub state or changing any files, interview the user and
-collect:
+Use the scripts to configure the machine; do not hand-author generated files. Do not run setup automatically during ordinary development. Explicit user authorization in the current session takes precedence over repeated confirmation steps.
 
-- The developer's proper name and the Git author name to use for each work
-  context when those differ.
-- Each client or work context they want isolated, including personal work.
-- The Git author email used for each client or context. Either a real address
-  or the host's private no-reply address is acceptable; it is the user's choice.
-  For signed commits to show as verified, the address must be verified on that
-  account.
-- Any additional Git hosts beyond github.com, such as a self-hosted Forgejo
-  server: its hostname, SSH port, and the account login used there.
-- Whether agents should commit and push every multi-file change automatically
-  (`settings.commitAndPush`). Explain that when it is on, agents commit and
-  push in each affected repository and run the post-push check before calling
-  a task complete; when it is off, they commit and push only when asked.
-- Whether newly created SSH keys should use an interactive passphrase. Explain
-  that GitHub CLI authentication and dual authentication/signing-key
-  registration are required parts of this setup.
-- Whether the default `~/Source` root is acceptable.
+1. Prepare the setup object from the [configuration schema](references/source-workspace-convention.md#configuration). Require an explicit host on every account; there is no implicit host or personal signing identity.
+2. Run `scripts/configure-ssh-identities.mjs --config-base64 <base64url-json> --dry-run`. Review conflicts. If a new key is required, use `--generate-missing-keys`; passphrases are entered interactively, never in arguments. After authorization, apply; `--replace` only replaces the reviewed managed fragment. Effective SSH resolution and matching key pairs are checked. Backups go to quarantine before replacements.
+3. Run `scripts/setup-local-source-code.mjs --config-base64 <value> --dry-run`. Present replacements and path collisions before applying. Apply the reviewed plan, using `--replace` only for authorized replacements. This installs the external configuration and portable workspace helpers/guide.
+4. For each account, have the user store its credential in the external `tokenFile` with mode `0600`. Never read or print that file yourself. Run `scripts/host-accounts.mjs validate --account <id>` and `owners --account <id>`; confirm discovered owners before adding routes. Account validation is part of every API operation; no service CLI is a universal prerequisite.
+5. Obtain authorization for registration, then run `host-accounts.mjs ensure-keys --account <id>`. It validates filenames, pair correspondence and machine naming, derives registration-day titles internally, registers supported key types, and verifies results. `verify-keys` is read-only. Host capabilities do not weaken mandatory local SSH signing or imply a verification badge. Unsupported registration metadata is reported through this same workflow.
+6. Run installed `scripts/wt-enforce-signing.mjs --dry-run`. Review the native Git policy, identity includes, historical/current trust entries, transport/signing guards, and repository drift. After authorization, apply. Remove direct repository overrides only when specifically authorized; retain approved explicit identity bindings.
+7. Use `scripts/wt-identity.mjs bind <account>` inside a remote-less or mixed-account repository. This records a local identity include and binding; it preserves the previous configuration. It must not be replaced with a global personal fallback.
 
-Do not ask for a GitHub username, a filesystem-safe identifier, an SSH key
-path/host alias, or organization names — these are suggested or discovered
-later in this workflow, never typed in blind:
+## Updates and migration
 
-- For each client, derive a short, filesystem-safe identifier by
-  kebab-casing the client name (e.g. "Acme Corp" → `acme-corp`, shortened to
-  `acme` when unambiguous) and propose it, `~/.ssh/github-{identifier}`, and
-  the SSH host alias (`github.com` for at most one GitHub identity, otherwise
-  `github.com-{identifier}`) as a suggestion. Let the user confirm or override
-  every suggested value; never apply one without confirmation.
-- The GitHub username and the organizations routed to each identity are
-  discovered from that identity's own GitHub CLI login later in this
-  workflow (see Script-Only Execution), never asked for directly.
+For compatible configuration, run setup with `--update --dry-run`, review the diff, then apply the authorized update. Update deploys helpers and guidance; it does not apply Git/SSH configuration or change routes. Never edit installed helpers directly.
 
-Routing is explicit and fails closed. Every repository owner — each
-organization and the account's own user — is routed to exactly one account.
-**There is no default account.** An owner that appears later (a new
-organization, or someone else's public repository) is added with
-`wt-route.mjs add {owner} {account}` after asking the user which account it
-belongs to. Never infer that two clients may share an identity, email, or key.
-Never include one client's credentials or access in another client's route.
+Schema version 2 requires the proper machine name, explicit host definitions, account-scoped credentials, and compliant key filenames. Do not deploy new helpers over an incompatible configuration. Prepare a full setup object from existing values, review before/after effective behavior, and preserve existing state in quarantine before replacement. Reuse approved keys; do not delete or re-register them to fix labels. Renaming existing keys, moving old host-separated checkouts into the common layout, or removing obsolete entry points requires a concrete migration plan. Detect owner/repository path collisions and preserve both repositories; never guess which host owns a path.
 
-Confirm the resulting mapping with the user, including every suggested and
-discovered value, before encoding it into configuration.
-
-## Script-Only Execution
-
-Use this skill's scripts for filesystem creation, generated configuration, and
-GitHub inspection. Do not hand-author the configuration, workspace files, or Git
-includes, and do not run direct GitHub commands as a substitute.
-
-1. Run `scripts/install-github-cli.mjs --dry-run`. If `gh` is absent, present
-   the platform-specific installation plan and obtain confirmation immediately
-   before running the installer without `--dry-run`. Do not substitute direct
-   package-manager commands.
-2. Run `scripts/configure-ssh-identities.mjs --config-base64 <value> --dry-run`
-   (built from the setup object's `hosts` and each identity's `host`, `login`
-   placeholder, suggested `sshHost`, any `sshHostAliases`, and `sshKeyPath`) to
-   check keys, host aliases, ports, and the managed SSH configuration fragment.
-   If keys are missing, add `--generate-missing-keys`; key generation prompts
-   interactively for a passphrase and never accepts one in an argument.
-3. After the user approves the SSH plan, run it without `--dry-run`. Use
-   `--replace` only when they approve replacing the managed fragment.
-4. Run `scripts/github-accounts.mjs inventory` to inspect locally authenticated
-   GitHub accounts without revealing tokens.
-5. For each GitHub identity that isn't already logged in, obtain confirmation
-   and run `scripts/github-accounts.mjs login`. It requests the key-management
-   scopes, configures `gh` to use SSH, deliberately skips automatic key upload
-   so registration remains deterministic, and prints the GitHub username of
-   the account that just authenticated — read that back as the identity's
-   `login` rather than asking the user to type it. For an existing account
-   lacking the required scopes, use `refresh-scopes --user <user>` after
-   confirmation.
-6. For every GitHub identity, run
-   `scripts/github-accounts.mjs discover-orgs --user <user>`. It is read-only
-   and lists every organization that login currently belongs to. Present the
-   list to the user and let them exclude any organization that doesn't belong
-   to this client's routing before it becomes that identity's `orgs`. Two
-   identities must never claim the same organization — surface it immediately
-   if discovery returns an overlap.
-7. For every GitHub identity, obtain confirmation and run `github-accounts.mjs`
-   with `ensure-keys --user <user> --public-key <path.pub> --title <title>`.
-   This is mandatory: it idempotently registers the same public key as both an
-   authentication key and an SSH signing key, then reads both GitHub key lists
-   to verify the result against the selected account.
-8. Run `scripts/github-accounts.mjs validate --users <comma-separated-users>`
-   and require every account to be healthy with `git_protocol=ssh`. Run
-   `verify-keys --user <user> --public-key <path.pub>` for every GitHub
-   identity and require both key types to report `VERIFIED`.
-9. For each additional-host (Forgejo) identity, guide the user through the
-   host's own web interface: register the public key for authentication and
-   signing, verify key ownership, activate the author email, and create an API
-   token. Have the user save the token in the host's credential file
-   (`hosts.{host}.tokenFile`, default `~/.config/forgejo/{host}.json`, mode
-   `0600`, containing `host`, `username`, and `token`). Never read, print, or
-   copy the token yourself. The user supplies that account's `login` and
-   owners (organizations) to route.
-10. Encode the setup object as Base64URL JSON using the schema in the
-    reference, now complete with every identity's discovered `login` and
-    `orgs`. Run `scripts/setup-local-source-code.mjs --config-base64 <value>
-    --dry-run` and present any conflicts or replacements before changing files.
-11. After the user has authorized the reported changes, run the same command
-    without `--dry-run`. Add `--replace` only when the user explicitly approves
-    replacing files managed by this setup, including an existing configuration.
-12. Run the installed `scripts/wt-enforce-signing.mjs --dry-run`, report what it
-    would write, then run it without `--dry-run`. It writes the workstation Git
-    includes and registers them in the global Git configuration. Report any
-    `DRIFT` or `UNROUTED` lines. Removing settings stored inside existing
-    repositories (`--remove-local-overrides`) changes those repositories; do it
-    only with the user's explicit approval.
-
-## Updating an Existing Workspace
-
-Installed helpers and the workspace guide are never edited in place. Changes
-are made in this skill and pulled into each workstation:
-
-1. Run `scripts/setup-local-source-code.mjs --update --dry-run`. Update mode
-   reads the existing configuration for the workspace root and never changes
-   the configuration, routes, or Git includes.
-2. Present every `CREATE`, `REPLACE`, and `UNMANAGED` line. A `Conflict` means an
-   installed file differs from the skill; show the difference before asking to
-   replace it. `UNMANAGED` files in `scripts/` are not the skill's and belong
-   elsewhere (for example `~/.local/bin`); move them only with approval.
-3. After approval, run `--update`, adding `--replace` only when replacements
-   were approved.
-4. Run the installed test suite and `scripts/wt-enforce-signing.mjs --dry-run`.
-
-**Migrating an older installation.** Older versions generated
-`scripts/lib/wt-config.mjs` as code containing identities and routes, and wrote
-identity settings into every repository. If no configuration file exists yet,
-build the setup object from the old file's values, confirm every value with the
-user (including the email for each account and an explicit route for every
-owner directory under `repos/`), and run full setup with `--replace`. Then run
-`wt-enforce-signing.mjs --dry-run`: repositories that still carry their own
-identity settings are reported as `DRIFT` until the user approves
-`--remove-local-overrides`.
+After migrating configuration and installing helpers, separately apply reviewed SSH configuration and the signing policy. Keep old trusted signing keys so historical commits remain verifiable. Retired helper files are reported as unmanaged; preserve and remove them only as part of the reviewed migration. Do not silently repair an existing remote registration title by deleting its key.
 
 ## Verification
 
-After setup or an update:
+- Run `--help` for every setup/account/workspace command and `node --test scripts/tests/*.test.mjs assets/workspace-scripts/tests/*.test.mjs` from the skill directory. Tests use isolated homes, credentials, temporary keys and mocked API responses.
+- Confirm `ssh -G` resolves each alias to its intended endpoint, user, port and key; test actual authentication and read-only repository access for each approved account. Report account authentication separately from repository authorization.
+- Verify actual SSH-signed commits and tags for multiple identities in disposable repositories outside the workspace and in linked worktrees. Check identity, signature type, intended signer and local verification separately.
+- Check canonical SSH, explicit-port SSH, approved HTTPS and alias URLs, mixed casing, exact repository exceptions, unknown owners, missing keys, mixed remotes, and remote-less initial commits. Verify explicit binding restores the intended behavior.
+- Confirm registration titles, proper machine names, registration dates, idempotency and both supported registration types. Never claim a remote supports an operation it does not expose.
+- Run the enforcer again and resolve remaining drift. Exercise `wt-pr-create.mjs --dry-run` without credentials, pushes or API calls. Preserve the authored-commit filter in `clone-mine`; use `clone-all` only when explicitly asked to include repositories never contributed to.
 
-- Run each installed `wt-*.mjs` command and both clone commands with `--help`.
-- Run `node --test scripts/tests/*.test.mjs` from the workspace root. The tests
-  use temporary configuration and never read the user's.
-- Confirm `wt-pr-create.mjs --dry-run` can validate a prepared ticket without
-  authenticating, pushing branches, or creating pull requests.
-- Confirm each GitHub account has the selected key registered for both SSH
-  authentication and SSH signing.
-- Run `wt-enforce-signing.mjs --dry-run` and confirm every primary clone
-  resolves to its routed identity: name, email, key, `gpg.format=ssh`, and
-  required commit and tag signing.
-- Run `wt-route.mjs list` and confirm the routes match the discovered logins,
-  organizations, and every value the user confirmed.
-- Run `clone-mine.mjs --dry-run` only when the user wants repository discovery;
-  it can make many read-only GitHub API requests.
-- Run `clone-all.mjs --dry-run` only when the user wants a complete repository
-  inventory. Run it without `--dry-run` only when the user explicitly asks to
-  include repositories they never committed to.
-- Confirm the installed `CLAUDE.md`, helpers, and tests contain no identity
-  data; personal values exist only in the configuration file.
-- Report created, preserved, replaced, or skipped files and any remaining
-  authentication or SSH work.
-
-## Safety
-
-- Never expose GitHub or Forgejo tokens or private-key contents.
-- Never place tokens, private keys, or personal configuration inside the source
-  workspace.
-- Do not create repositories, delete repositories, push commits, or change
-  repository visibility as part of workspace setup.
-- Do not overwrite existing Git, SSH, or workspace configuration without the
-  user's explicit approval.
-- Keep all GitHub calls scoped to the username discovered from that identity's
-  own login.
-
-## Repository path casing
-
-Use the shared helper scripts for all primary clones and worktrees. Owner and
-repository identity matching is case-insensitive; reuse a unique existing
-path and use the host's spelling for new names. Do not lowercase ticket IDs or
-Git branches. Run `scripts/wt-audit-paths.mjs` during verification and report
-collisions separately from setup success. Never resolve duplicates by silently
-choosing one or deleting it. See the path policy in
-[the workspace convention](references/source-workspace-convention.md).
+Git settings can be explicitly overridden. Unbypassable acceptance of SSH-only signatures and approved signers requires repository-side validation; generic signed-commit rules alone do not establish those properties. Do not change hosting rules without authorization.

@@ -1,309 +1,111 @@
 # Local Source Workspace Convention
 
-This convention gives developers one predictable place for primary clones,
-task worktrees, local-only projects, reusable tooling, and durable research.
-The same rules, helpers, and guide apply on every machine; only one JSON
-configuration file differs between people.
+Repository identity is independent of checkout location. Host plus owner and optional exact repository determine the account; an explicit repository binding resolves ambiguity. Ordinary Git reads native workstation configuration, while narrow Git-invoked guards check the selected signing identity and route each SSH endpoint. Account API operations use the same workflow for all hosts.
 
 ## Layout
 
 ```text
-~/Source/
-├── repos/        # Primary clones: repos/{owner}/{repo}; other hosts: repos/{host}/{owner}/{repo}
-├── trees/        # Task worktrees grouped by client/project and ticket/slug
-├── local/        # Local-only projects that are not intended for a Git host
-├── scripts/      # The skill's executable Node.js helpers, and nothing else
-├── research/     # Durable, dated research findings
-└── quarantine/   # State preserved before risky repairs (created when needed)
+{workspace}/
+├── repos/{owner}/{repo}/
+├── trees/{client-or-project}/{ticket-or-slug}/{repo}/
+├── local/{kebab-case-slug}/
+├── scripts/
+├── research/
+└── quarantine/
 ```
 
-Primary clones are plumbing. Never perform repository work directly in
-`repos/`. Work happens in:
+Direct cloning and development in primary clones are allowed. Ticket worktrees are optional isolation. New client folders are lowercase; ticket IDs and branch names retain exact case. Owners/repositories are matched case-insensitively, reusing unique existing spelling. Multiple spellings are an error. All hosts share the same owner/repository path convention. If two hosts have the same owner/repository coordinate, refuse reuse of an occupied path and set an explicit `ownerDirectories` mapping from `host/owner` to a neutral local owner-directory name. This keeps one layout without provider-specific areas.
 
-```text
-trees/{client-or-project}/{ticket-id-or-slug}/{repo}
-```
+Local-only projects have no Git initialization or publication unless explicitly requested. Research reads project code and writes under research, with dated topic folders indexed by `research/TOPICS.md`, one findings file per research subagent, then final synthesis. Running/changing project code is development. `scripts/` contains installed helpers only; personal tools belong elsewhere.
 
-The ticket directory is a plain grouping folder. Every repository worktree in
-the same ticket directory uses the ticket ID or slug as its branch name.
+Before risky configuration, branch, clone or worktree replacement, preserve state in `quarantine/{date}-{slug}/` with a README identifying its source and reason. Never delete quarantine contents without explicit approval.
 
-Local-only projects live directly under `local/{kebab-case-slug}` without Git
-initialization, commits, or publication unless their intent later changes.
+## Configuration
 
-Research reads code in primary clones and writes only under `research/`. It
-never creates worktrees; running or changing code requires a ticket worktree
-under a real client or project.
-
-Before deleting, renaming, or rewriting a clone, worktree, branch, or
-configuration, copy whatever could be lost into
-`quarantine/{YYYY-MM-DD}-{slug}/` with a `README.md` describing it. Quarantined
-state is removed only with explicit approval.
-
-## Workspace Guide
-
-The workspace's operating guidance is a static `CLAUDE.md` shipped in this
-skill's `assets/workspace-guide/`. It is identical on every machine and contains
-no personal data. `AGENTS.md` points to it with a relative file symlink where
-the platform allows one, and otherwise is an identical copy. Rules that vary by
-developer are written as conditions on a configuration setting.
-
-Installed helpers and the guide are never edited on a workstation. Changes are
-made in the skill and pulled in with the setup script's `--update` mode.
-
-## Workspace Configuration
-
-Everything personal or machine-specific lives in one JSON file outside the
-workspace:
-
-- `$SOURCE_WORKSPACE_CONFIG`, or by default `~/.config/source-workspace/config.json`
-  (mode `0600`).
+External file: `$SOURCE_WORKSPACE_CONFIG`, default `~/.config/source-workspace/config.json`, mode `0600`. This example contains placeholders:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "sourceRoot": "~/Source",
-  "settings": { "commitAndPush": false },
+  "machineName": "Engineering Workstation",
+  "settings": { "commitAndPush": false, "agentCaching": true, "useKeychain": false },
   "hosts": {
-    "git.example.com": {
+    "code.example.test": {
       "provider": "forgejo",
-      "sshPort": 2222,
-      "tokenFile": "~/.config/forgejo/git.example.com.json"
+      "apiBase": "https://code.example.test/api/v1/",
+      "sshHostname": "code.example.test",
+      "sshUser": "git",
+      "sshPort": 22
     }
   },
   "accounts": {
-    "personal": {
-      "label": "Personal",
-      "host": "github.com",
-      "login": "github-user",
-      "gitName": "Developer Name",
-      "gitEmail": "developer@example.com",
-      "sshHost": "github.com",
-      "sshHostAliases": [],
-      "sshKeyPath": "~/.ssh/github-personal"
-    },
     "company": {
-      "label": "Company forge",
-      "host": "git.example.com",
-      "login": "dev",
+      "label": "Company",
+      "host": "code.example.test",
+      "login": "developer",
       "gitName": "Developer Name",
       "gitEmail": "developer@company.example",
-      "sshHost": "git.example.com",
-      "sshKeyPath": "~/.ssh/company-forge"
+      "sshHost": "code-company",
+      "sshHostAliases": [],
+      "sshKeyPath": "~/.ssh/id_company",
+      "tokenFile": "~/.config/source-workspace/credentials/company.json"
     }
   },
-  "routes": {
-    "github.com": { "github-user": "personal", "personal-org": "personal" },
-    "git.example.com": { "team": "company" }
-  }
+  "routes": { "code.example.test": { "team": "company" } },
+  "repositories": { "code.example.test/team/special-repo": "company" },
+  "ownerDirectories": {}
 }
 ```
 
-Values shown are placeholders, not defaults.
+Every host is explicit. The internal API implementation selector accepts `github`, `forgejo`, or `bitbucket`; it does not alter public workflow, path layout, naming rules or signing policy. `apiBase`, SSH endpoint/user/port and account credentials are independent. Supported API operations are account validation, owner/repository discovery, authored-commit matching, key registration, and pull-request creation/reuse.
 
-- `settings.commitAndPush` — when `true`, agents commit and push every
-  multi-file change and run the post-push check; when `false`, only on request.
-- `hosts` — github.com is always present with the `github` provider. Additional
-  hosts use the `forgejo` provider (Forgejo or Gitea), an SSH port, and a
-  credential file holding `{ "host", "username", "token" }` with mode `0600`.
-- `accounts` — one per client or work context. IDs use lowercase letters,
-  digits, and single hyphens. Each SSH host and alias belongs to exactly one
-  account. `sshHostAliases` lists older alias names still present in existing
-  clones' origins; they are accepted wherever the primary alias is.
-- `routes` — per host, an explicit owner → account table. Owners (organization
-  or user names) are matched case-insensitively and may appear once per host.
-  A route may only name an account on that host.
+`routes` maps host/owner to account. `repositories` maps exact host/owner/repository to account and takes precedence. All map matching is case-insensitive. Account IDs use lowercase letters/digits/hyphens. A host alias belongs to exactly one account. Different personas use distinct keys; the same name/email persona may reuse a key across hosts. Unknown/ambiguous routes require explicit selection; there is no personal signing fallback.
 
-The helpers read the file directly; `wt-route.mjs add` and the setup script are
-the only tools that write it.
+A private credential file contains `host`, `login`, `token`, and optionally `authUsername` when Basic authentication is required. API operations verify the selected authenticated account, constrain pagination to the configured HTTPS API base, disable redirects and suppress credential-bearing errors. Users save credentials directly; agents must not read or reproduce them. Native Git/SSH does not need API credentials.
 
-## Routing
+The full setup input uses the same `sourceRoot`, `machineName`, `settings`, `hosts`, `repositories`, and `ownerDirectories`, with `identities` instead of `accounts/routes`. Each identity includes `id`, `clientName`, `host`, `login`, `gitName`, `gitEmail`, `sshHost`, `sshHostAliases`, `sshKeyPath`, `tokenFile`, and approved `orgs`. The setup script converts approved owners and the account login to explicit routes.
 
-Routing is explicit and fails closed. **There is no default account.** Every
-owner a helper touches must have a route on its host. When one doesn't, the
-helper stops with an error that prints the exact
-`wt-route.mjs add {owner} {account}` command; the user decides the account.
-Repository cloning, API access, pushes, commit authorship, and SSH signing all
-use the routed account.
+## Naming and registration
 
-Setup creates routes for each account's own login and for the organizations its
-login belongs to, after the user excludes any that don't belong to that client.
-An owner may never be routed to two accounts, and the helpers refuse to silently
-change an existing route.
+Private key filenames must be `id_{persona-or-company}`; public keys append `.pub`. Examples: `id_fredlackey`, `id_ccsi`, `id_cisa`. The suffix is the approved persona/company, independently of account/host aliases. Validate at configuration, generation and registration boundaries. Never silently rename existing keys.
 
-## Identity and Signing
+New hosted key titles must be `{Proper Machine Name} ({YYYYMMDD})`, using the actual local addition date. Establish the proper human-readable machine name explicitly; reject OS labels, `.local` hostnames and generic placeholders. Titles are constructed by the tooling, not free-form input. Existing registrations retain their metadata and dates; nonconforming existing titles require review. Unsupported key-registration types/labels are recorded through the shared capability model without claiming remote registration. Local SSH signing remains mandatory regardless of remote display capabilities.
 
-Author identity and SSH signing are configured once per workstation, not per
-repository. `wt-enforce-signing.mjs` generates, next to the configuration file:
+## Native Git and SSH policy
 
-- `git/{account}.gitconfig` — the account's `user.name`, `user.email`,
-  `user.signingkey`, `gpg.format=ssh`, `commit.gpgsign=true`, and
-  `tag.gpgsign=true`.
-- `git/routes.gitconfig` — one `includeIf "gitdir/i:{repos}/{owner}/"` per route
-  (`{repos}/{host}/{owner}/` for additional hosts) pointing at that account's
-  file.
+The enforcer writes account identity files, `routes.gitconfig`, and `allowed_signers` beside the external configuration. It registers the policy as a global include after preserving the old configuration. The baseline selects SSH signatures and enables commit/tag signing, disables inferred author identity, and supplies no fallback author email or signing key. Account files provide the selected name/email/key. Existing historical trust entries are merged, not discarded.
 
-It registers `routes.gitconfig` with `include.path` in the global Git
-configuration. Because the condition matches the primary clone's Git directory,
-every linked worktree inherits the same identity. Repositories store no identity
-or signing settings of their own; the enforcer reports any that would override
-the workstation (`DRIFT`) and removes them only with `--remove-local-overrides`.
-Helpers refuse to clone until the workstation configuration is installed and
-current, and verify each new clone's effective identity.
+Native remote conditional includes cover raw stored SCP, `ssh://`, HTTPS and alias forms with explicit casing patterns. They match **any remote**, not only origin. Exact repository conditions follow owner rules. Because Git itself does not reject conflicting matches, `wt-sign.mjs` verifies the resolved identity and actual committer/tagger before delegating to `ssh-keygen`. It preserves legitimate original authors on replayed commits. Verification delegates to the standard SSH verifier.
 
-Git 2.34 or newer is required for SSH signing. Each account's public key is
-registered on its host as both an authentication key and a signing key. For
-signatures to show as verified, the configured email must be verified on that
-account.
+`wt-ssh.mjs` is installed as Git's SSH command. It resolves each transfer's repository host/owner/repository and invokes native SSH through the approved alias, including mixed-case URLs and exact exceptions that literal prefix rewriting cannot fully represent. Native owner URL rewrites cover common canonical URLs. The transport guard resolves each remote independently; fetching another upstream does not change the repository signing identity. Direct SSH continues to use ordinary SSH aliases.
 
-## Workspace Tools
+Use `wt-identity.mjs show` to inspect selection. `bind {account}` adds an explicit local identity include and `source-workspace.identity` setting for remote-less or mixed-account repositories. This is the narrow exception to avoiding duplicated repository-local identity settings. Changing an existing binding requires deliberate review.
 
-The setup installs dependency-free executable Node.js tools:
+SSH configuration is checked using effective `ssh -G` results from a projected configuration, including nested/scoped Includes, wildcard defaults and accumulated identity files. Refuse conflicts rather than relying on text-only matching. Key-pair correspondence is checked without printing private material. Optional `agentCaching` adds keys to an available agent after use; `useKeychain` enables supported keychain integration. Test fresh-session/GUI behavior where needed; an empty agent alone does not prove file-based authentication failure.
 
-- `wt-create.mjs {owner}/{repo} {client} {ticket} [--host {host}]` creates a
-  task worktree on branch `{ticket}`, cloning the primary first when needed.
-  Re-running it for an existing worktree validates and reports it without
-  changing anything.
-- `wt-sync.mjs {owner}/{repo} [--host {host}] [--strict] [--verify-branch {branch} [--commit {sha}]]`
-  always fetches, then fast-forwards the primary's default branch only when the
-  primary is clean and on it; otherwise it reports why it skipped and changes
-  nothing. A skip exits `0`, or `2` with `--strict`. `--verify-branch` requires
-  `origin/{branch}` to equal the pushed commit (the local branch tip unless
-  `--commit` is given) and exits `3` otherwise. `--strict --verify-branch` is
-  the post-push check.
-- `wt-list.mjs` lists task folders and their repository worktrees.
-- `wt-status.mjs` reports clean/dirty and ahead/behind state.
-- `wt-pr-create.mjs {client} {ticket} {base-branch}` locally preflights every
-  repo worktree in a ticket, pushes each ticket branch, and creates its pull
-  request (GitHub, or Forgejo with a `[WIP]` title prefix for drafts) using a
-  shared body file or repo-specific body files. Origins must use the routed
-  account's SSH host or a configured alias. It does not fetch or merge, reuses
-  existing open pull requests, and prints every resulting link.
-- `wt-remove.mjs` safely removes a clean worktree and can optionally delete its
-  merged local branch.
-- `wt-prune.mjs` always runs `git worktree prune` in every primary clone, reports
-  directories under `trees/` that are no longer registered worktrees, and
-  deletes them only with `--force`.
-- `wt-open.mjs {client} {ticket}` opens the entire ticket folder in VS Code.
-- `wt-audit-paths.mjs` reports case-variant duplicate paths.
-- `wt-route.mjs list` / `add {owner} {account} [--host {host}]` shows or adds
-  routes and refreshes the generated Git includes.
-- `wt-enforce-signing.mjs [--dry-run] [--remove-local-overrides]` installs the
-  workstation identity configuration and audits every primary clone.
-- `clone-mine.mjs` discovers repositories with commits authored by configured
-  GitHub accounts in organizations routed to them, and clones them.
-- `clone-all.mjs [--profile {account}]` clones every repository in organizations
-  routed to configured GitHub accounts without inspecting history. It is used
-  only when the user explicitly asks to include repositories without authored
-  contributions.
+## Helpers and completion
 
-Scripts use `.mjs`, ES modules, a Node shebang, no npm dependencies, and avoid
-shell interpretation of user-provided path segments. `scripts/` contains only
-these helpers, their `lib/`, and their `tests/`.
+`wt-create`, `wt-sync`, `wt-route`, `wt-list`, `wt-status`, `wt-open`, `wt-remove`, `wt-prune`, `wt-audit-paths`, `wt-enforce-signing`, `wt-identity`, and `wt-pr-create` share the external configuration. Each accepts `--help`. `--host` resolves ambiguous owner routes; no host gets an implicit preference. `host-accounts` is the shared account/registration interface in the skill's scripts.
 
-## Bulk Cloning Scope
+`clone-mine` scans routed owners and clones only repositories with authored commits. `clone-all` bypasses authorship only when the user explicitly requests that scope. Existing clones are preserved; unrouted owners are skipped. Both commands cover all configured accounts and accept host/profile scoping.
 
-`clone-mine.mjs`'s authored-commit filter defines which repositories qualify
-for bulk cloning. Requests such as "clone all my repos" mean every qualifying
-repository; they do not authorize bypassing the filter with extra passes,
-direct calls to cloning functions, replacement loops, or filter changes.
-Broader cloning requires an explicit instruction to include repositories
-without authored contributions. Skipped repositories are expected results.
+`wt-pr-create` performs local preflight before authentication/push, reads bodies from files, pushes only ticket branches, then creates/reuses requests through the common API contract. It never fetches or merges. Dry-run performs no API requests or network mutation. Draft capability is handled internally, preserving the same command surface.
 
-## Completing Changes
+When `settings.commitAndPush=true`, every task changing more than one tracked file must commit only its changes and push the current branch in every affected repository. After each push require exit 0 from `wt-sync.mjs {owner}/{repo} --host {host} --strict --verify-branch {branch}`. Resolve skipped synchronization or verification failure without discarding primary work. When false, commit/push only when requested.
 
-When `settings.commitAndPush` is `true`, a task that creates, deletes, or
-modifies more than one file in Git-backed work is complete only when its changes
-are committed in every affected repository, pushed, and verified with the
-post-push check. Only the task's changes are staged. Git is never initialized
-and remotes are never invented for directories that aren't repositories.
-Regardless of the setting, every push is followed by the post-push check, and a
-failed check is resolved without discarding changes in a primary clone.
+## Deployment and verification
 
-## GitHub CLI and SSH Prerequisites
+Source changes belong in this skill; installed helpers are generated. Compatible updates deploy helpers/guide only and never change configuration. Incompatible schema/filename/path changes require a preserved full migration. Old entry points reported as unmanaged must not be removed silently. Keep existing keys and remote registrations during migration.
 
-GitHub CLI is mandatory. The skill installs it when absent using WinGet on
-Windows, Homebrew on macOS, GitHub's signed official apt repository on
-Ubuntu/Debian, or the Arch `github-cli` package on Arch Linux. Installation is
-previewed first because it changes system software.
+Run `node --test scripts/tests/*.test.mjs assets/workspace-scripts/tests/*.test.mjs` from the skill directory, and `node --test scripts/tests/*.test.mjs` after installation. Tests isolate homes/configuration and generate temporary signing keys, with no real API calls or pushes. Verify actual SSH commit/tag signatures, multiple identities and hosts, worktrees/off-path repositories, mixed remotes and explicit bindings, naming/date rules, historical trust, effective SSH conflicts, and dry-run/no-write behavior.
 
-Each GitHub account is authenticated in `gh` through the browser flow with the
-Git protocol set to SSH. Automatic key upload during login is disabled so the
-skill can deterministically register and verify the interviewed key afterward.
-The login must have permission to administer authentication and SSH signing
-keys. Existing logins are refreshed when those permissions are absent.
+Git signing flags are overridable. Rejecting unsigned history, non-SSH signatures or an unapproved signer at acceptance requires appropriate repository-side checks; a generic signed-commit requirement is not equivalent.
 
-SSH host aliases are written to a managed `~/.ssh/config.d/` fragment: one
-`Host` entry per account listing its alias and any older aliases, with the
-real host name and, for additional hosts, its SSH port.
-
-## Research
-
-```text
-research/
-├── TOPICS.md
-└── {YYYY}/{MM}/{DD}/{topic-slug}/
-    ├── README.md
-    ├── findings-{subtopic}.md
-    ├── SUMMARY.md
-    ├── CATALOG.md   (optional)
-    └── PLAN.md      (optional)
-```
-
-`TOPICS.md` indexes every research topic in one contiguous table. The topic
-README captures the full question. The topic is split into pieces, each
-researched by its own subagent writing its own findings file, so parallel
-researchers never overwrite one another. A final agent reads every findings
-file and writes the summary. `CATALOG.md` holds an inventory when that is the
-deliverable; `PLAN.md` holds an agreed plan that follows from the research.
-
-## Setup Input Schema
-
-The setup script accepts the interview result as Base64URL-encoded JSON and
-converts it into the workspace configuration. `login` and `orgs` come from
-account login and organization discovery, not from typing during the interview:
-
-```json
-{
-  "sourceRoot": "~/Source",
-  "settings": { "commitAndPush": false },
-  "hosts": {},
-  "identities": [
-    {
-      "id": "personal",
-      "clientName": "Personal",
-      "host": "github.com",
-      "gitName": "Developer Name",
-      "gitEmail": "developer@example.com",
-      "login": "github-user",
-      "sshHost": "github.com",
-      "sshHostAliases": [],
-      "sshKeyPath": "~/.ssh/github-personal",
-      "orgs": ["personal-org"]
-    }
-  ]
-}
-```
-
-Each identity becomes an account. Its `login` and every entry in `orgs` become
-routes on its `host`. `githubUser` is accepted as an older spelling of `login`.
-`defaultIdentity` is rejected: routing has no default. `settings.commitAndPush`
-is required.
-
-## Path Policy
-
-New client directories use lowercase names; existing unambiguous client
-directories are reused. Owner and repository comparisons are case-insensitive.
-Use the host's returned spelling for new names, but reuse a sole existing owner
-or repository directory regardless of case. Multiple case-equivalent paths are
-an error, even when one exactly matches the argument. Run `wt-audit-paths.mjs`
-to report collisions; reconcile them with preserved Git state before retrying.
-Do not simply lowercase every path or rename existing directories automatically.
-For example, requesting `ExampleOrg/Tools` reuses an existing verified
-`repos/exampleorg/tools`; it must not create another clone.
-
-Ticket IDs and Git branches retain exact case: `TASK-1423` must not become
-`task-1423`. Case-only ticket or local branch conflicts are rejected. Existing
-worktrees must match their primary clone, registration, and ticket branch.
-New clone metadata is fetched using the routed account; reusing an existing
-clone requires no network. Creation uses a workspace lock; retry if another
-creator is running. Only remove a stale lock after checking no creator remains.
+The implementation follows the [Git configuration reference](https://git-scm.com/docs/git-config),
+[OpenSSH client configuration](https://man.openbsd.org/ssh_config),
+[OpenSSH key format](https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.key),
+and the configured hosts' API contracts. Key-pair validation compares the embedded
+public identity in an OpenSSH-format private key with its public companion without
+printing or transmitting private material. Different persona identities are checked
+against actual public key material, not just filename uniqueness.

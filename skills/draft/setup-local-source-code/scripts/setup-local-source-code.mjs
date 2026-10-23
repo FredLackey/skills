@@ -4,22 +4,35 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
+import { preserveBeforeWrite } from '../assets/workspace-scripts/lib/preserve.mjs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SKILL_DIR = path.dirname(SCRIPT_DIR);
 const ASSET_DIR = path.join(SKILL_DIR, 'assets', 'workspace-scripts');
-const GUIDE_FILE = path.join(SKILL_DIR, 'assets', 'workspace-guide', 'CLAUDE.md');
+const GUIDE_FILE = path.join(
+  SKILL_DIR,
+  'assets',
+  'workspace-guide',
+  'CLAUDE.md',
+);
 const { configPath, normalizeConfig: validateWorkspaceConfig } = await import(
-  pathToFileURL(path.join(ASSET_DIR, 'lib', 'wt-config.mjs')).href);
+  pathToFileURL(path.join(ASSET_DIR, 'lib', 'wt-config.mjs')).href
+);
 
 /** Every helper asset, as [relative path, mode]; top-level .mjs files are executable. */
 function managedFiles(dir = ASSET_DIR, prefix = '') {
-  return fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name)).flatMap((entry) => {
-    const relative = path.join(prefix, entry.name);
-    if (entry.isDirectory()) return managedFiles(path.join(dir, entry.name), relative);
-    return [[relative, !prefix && entry.name.endsWith('.mjs') ? 0o755 : 0o644]];
-  });
+  return fs
+    .readdirSync(dir, { withFileTypes: true })
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .flatMap((entry) => {
+      const relative = path.join(prefix, entry.name);
+      if (entry.isDirectory())
+        return managedFiles(path.join(dir, entry.name), relative);
+      return [
+        [relative, !prefix && entry.name.endsWith('.mjs') ? 0o755 : 0o644],
+      ];
+    });
 }
 
 function usage() {
@@ -29,7 +42,7 @@ function usage() {
     '  setup-local-source-code.mjs --update [--dry-run] [--replace]',
     '',
     '--config-base64  Full setup: write the workspace configuration, helpers, and guide.',
-    '--update         Pull the skill\'s helpers and guide into an existing workspace.',
+    "--update         Pull the skill's helpers and guide into an existing workspace.",
     '                 Reads the existing configuration and never changes it.',
     '--dry-run        Report changes without writing anything.',
     '--replace        Replace conflicting files managed by this setup.',
@@ -39,7 +52,12 @@ function usage() {
 }
 
 function parseArgs(argv) {
-  const result = { dryRun: false, replace: false, update: false, configBase64: null };
+  const result = {
+    dryRun: false,
+    replace: false,
+    update: false,
+    configBase64: null,
+  };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === '--dry-run') result.dryRun = true;
@@ -49,7 +67,8 @@ function parseArgs(argv) {
     else if (arg === '--help' || arg === '-h') result.help = true;
     else throw new Error(`Unknown argument: ${arg}\n\n${usage()}`);
   }
-  if (!result.help && Boolean(result.configBase64) === result.update) throw new Error(usage());
+  if (!result.help && Boolean(result.configBase64) === result.update)
+    throw new Error(usage());
   return result;
 }
 
@@ -65,7 +84,9 @@ function decodeConfig(encoded) {
   try {
     return JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
   } catch {
-    throw new Error('The --config-base64 value must be Base64URL-encoded JSON.');
+    throw new Error(
+      'The --config-base64 value must be Base64URL-encoded JSON.',
+    );
   }
 }
 
@@ -84,62 +105,92 @@ function buildWorkspaceConfig(input) {
     throw new Error('Configuration must be a JSON object.');
   }
   if ('defaultIdentity' in input) {
-    throw new Error('defaultIdentity is no longer supported: every owner is routed explicitly.');
+    throw new Error(
+      'defaultIdentity is no longer supported: every owner is routed explicitly.',
+    );
   }
   if (typeof input.settings?.commitAndPush !== 'boolean') {
-    throw new Error('settings.commitAndPush must be true or false (ask during the interview).');
+    throw new Error(
+      'settings.commitAndPush must be true or false (ask during the interview).',
+    );
   }
   const accounts = {};
   const routes = {};
   requireArray(input.identities, 'identities').forEach((item, index) => {
     const label = `identities[${index}]`;
-    if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error(`${label} must be an object.`);
-    const host = String(item.host ?? 'github.com').toLowerCase();
-    const login = item.login ?? item.githubUser;
-    if (host === 'github.com' && !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(String(login))) {
-      throw new Error(`${label}.login is not a valid GitHub username.`);
-    }
-    if (Object.hasOwn(accounts, item.id)) throw new Error(`Duplicate identity id: ${item.id}`);
+    if (!item || typeof item !== 'object' || Array.isArray(item))
+      throw new Error(`${label} must be an object.`);
+    const host = String(item.host ?? '').toLowerCase();
+    const login = item.login;
+    if (Object.hasOwn(accounts, item.id))
+      throw new Error(`Duplicate identity id: ${item.id}`);
     accounts[item.id] = {
-      label: item.clientName, host, login, gitName: item.gitName, gitEmail: item.gitEmail,
-      sshHost: item.sshHost, sshHostAliases: item.sshHostAliases ?? [], sshKeyPath: item.sshKeyPath,
+      label: item.clientName,
+      host,
+      login,
+      gitName: item.gitName,
+      gitEmail: item.gitEmail,
+      tokenFile: item.tokenFile,
+      sshHost: item.sshHost,
+      sshHostAliases: item.sshHostAliases ?? [],
+      sshKeyPath: item.sshKeyPath,
     };
     routes[host] ??= {};
-    for (const owner of [...requireArray(item.orgs ?? [], `${label}.orgs`), login]) {
+    for (const owner of [
+      ...requireArray(item.orgs ?? [], `${label}.orgs`),
+      login,
+    ]) {
       const key = String(owner).toLowerCase();
       if (routes[host][key] && routes[host][key] !== item.id) {
-        throw new Error(`${owner} on ${host} is claimed by both ${routes[host][key]} and ${item.id}.`);
+        throw new Error(
+          `${owner} on ${host} is claimed by both ${routes[host][key]} and ${item.id}.`,
+        );
       }
       routes[host][key] = item.id;
     }
   });
   const config = {
-    version: 1,
+    version: 2,
+    machineName: input.machineName,
+    repositories: input.repositories ?? {},
+    ownerDirectories: input.ownerDirectories ?? {},
     sourceRoot: input.sourceRoot ?? '~/Source',
-    settings: { commitAndPush: input.settings.commitAndPush },
+    settings: {
+      commitAndPush: input.settings.commitAndPush,
+      agentCaching: input.settings.agentCaching === true,
+      useKeychain: input.settings.useKeychain === true,
+    },
     hosts: input.hosts ?? {},
     accounts,
     routes,
   };
   const normalized = validateWorkspaceConfig(config);
-  const sshKeys = new Set();
+  const sshKeys = new Map();
   for (const [id, account] of Object.entries(normalized.accounts)) {
     const keyPath = expandHome(account.sshKeyPath);
-    if (keyPath === path.parse(keyPath).root) throw new Error(`${id}.sshKeyPath is unsafe.`);
-    if (sshKeys.has(keyPath)) throw new Error(`SSH private key is shared by multiple identities: ${account.sshKeyPath}`);
-    sshKeys.add(keyPath);
+    if (keyPath === path.parse(keyPath).root)
+      throw new Error(`${id}.sshKeyPath is unsafe.`);
+    const persona = `${account.gitName} <${account.gitEmail}>`;
+    if (sshKeys.has(keyPath) && sshKeys.get(keyPath) !== persona)
+      throw new Error('Different identities must have different SSH keys.');
+    sshKeys.set(keyPath, persona);
   }
   const resolvedRoot = expandHome(normalized.sourceRoot);
-  if (resolvedRoot === path.parse(resolvedRoot).root) throw new Error('sourceRoot must not be a filesystem root.');
+  if (resolvedRoot === path.parse(resolvedRoot).root)
+    throw new Error('sourceRoot must not be a filesystem root.');
   return { config, resolvedRoot };
 }
 
 function existingWorkspaceRoot() {
   const file = configPath();
   let raw;
-  try { raw = JSON.parse(fs.readFileSync(file, 'utf8')); }
-  catch (error) {
-    if (error.code === 'ENOENT') throw new Error(`No workspace configuration at ${file}; run full setup first.`);
+  try {
+    raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (error) {
+    if (error.code === 'ENOENT')
+      throw new Error(
+        `No workspace configuration at ${file}; run full setup first.`,
+      );
     throw error;
   }
   return expandHome(validateWorkspaceConfig(raw).sourceRoot);
@@ -151,7 +202,9 @@ function topicsIndex() {
 
 function sameFile(target, content) {
   try {
-    return fs.readFileSync(target).equals(Buffer.isBuffer(content) ? content : Buffer.from(content));
+    return fs
+      .readFileSync(target)
+      .equals(Buffer.isBuffer(content) ? content : Buffer.from(content));
   } catch (error) {
     if (error.code === 'ENOENT') return false;
     throw error;
@@ -175,11 +228,19 @@ function applyFile(target, content, options, mode) {
     return;
   }
   if (exists && !options.replace) {
-    throw new Error(`Conflict: ${target} differs. Review it and rerun with --replace only if approved.`);
+    throw new Error(
+      `Conflict: ${target} differs. Review it and rerun with --replace only if approved.`,
+    );
   }
   console.log(`${exists ? 'REPLACE' : 'CREATE '} ${target}`);
   if (options.dryRun) return;
   fs.mkdirSync(path.dirname(target), { recursive: true });
+  if (exists)
+    preserveBeforeWrite(
+      [target],
+      'Replacing a managed setup artifact.',
+      options.sourceRoot,
+    );
   fs.writeFileSync(target, content, { mode });
   if (mode) fs.chmodSync(target, mode);
 }
@@ -192,21 +253,34 @@ function applyGuideAlias(root, guide, options) {
   }
   const exists = pathExists(target);
   if (exists && !options.replace) {
-    throw new Error(`Conflict: ${target} differs. Review it and rerun with --replace only if approved.`);
+    throw new Error(
+      `Conflict: ${target} differs. Review it and rerun with --replace only if approved.`,
+    );
   }
-  console.log(`${exists ? 'REPLACE' : 'CREATE '} ${target} as an alias of CLAUDE.md`);
+  console.log(
+    `${exists ? 'REPLACE' : 'CREATE '} ${target} as an alias of CLAUDE.md`,
+  );
   if (options.dryRun) return;
   if (exists) {
     const stat = fs.lstatSync(target);
-    if (stat.isDirectory()) throw new Error(`Cannot replace directory: ${target}`);
+    if (stat.isDirectory())
+      throw new Error(`Cannot replace directory: ${target}`);
+    preserveBeforeWrite(
+      [target],
+      'Replacing a reviewed workspace guide alias.',
+      options.sourceRoot,
+    );
     fs.unlinkSync(target);
   }
   try {
     fs.symlinkSync('CLAUDE.md', target, 'file');
   } catch (error) {
-    if (!['EPERM', 'EACCES', 'ENOTSUP', 'UNKNOWN'].includes(error.code)) throw error;
+    if (!['EPERM', 'EACCES', 'ENOTSUP', 'UNKNOWN'].includes(error.code))
+      throw error;
     fs.writeFileSync(target, guide, { mode: 0o644 });
-    console.log(`FALLBACK ${target} created as a copy because file symlinks are unavailable.`);
+    console.log(
+      `FALLBACK ${target} created as a copy because file symlinks are unavailable.`,
+    );
   }
 }
 
@@ -221,7 +295,12 @@ function installHelpers(root, options) {
 
   const files = managedFiles();
   for (const [relative, mode] of files) {
-    applyFile(path.join(root, 'scripts', relative), fs.readFileSync(path.join(ASSET_DIR, relative)), options, mode);
+    applyFile(
+      path.join(root, 'scripts', relative),
+      fs.readFileSync(path.join(ASSET_DIR, relative)),
+      options,
+      mode,
+    );
   }
   const guide = fs.readFileSync(GUIDE_FILE);
   applyFile(path.join(root, 'CLAUDE.md'), guide, options, 0o644);
@@ -234,18 +313,38 @@ function installHelpers(root, options) {
   // scripts/ holds only the skill's helpers; report anything else for the user to move.
   const managed = new Set(files.map(([relative]) => relative));
   const scriptsDir = path.join(root, 'scripts');
-  const walk = (dir, prefix = '') => (fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }) : [])
-    .flatMap(entry => entry.isDirectory() ? walk(path.join(dir, entry.name), path.join(prefix, entry.name)) : [path.join(prefix, entry.name)]);
-  for (const relative of walk(scriptsDir).filter(name => !managed.has(name))) {
-    console.log(`UNMANAGED ${path.join(scriptsDir, relative)} (not part of the skill; move personal tools elsewhere, e.g. ~/.local/bin)`);
+  const walk = (dir, prefix = '') =>
+    (fs.existsSync(dir)
+      ? fs.readdirSync(dir, { withFileTypes: true })
+      : []
+    ).flatMap((entry) =>
+      entry.isDirectory()
+        ? walk(path.join(dir, entry.name), path.join(prefix, entry.name))
+        : [path.join(prefix, entry.name)],
+    );
+  for (const relative of walk(scriptsDir).filter(
+    (name) => !managed.has(name),
+  )) {
+    console.log(
+      `UNMANAGED ${path.join(scriptsDir, relative)} (not part of the skill; move personal tools elsewhere, e.g. ~/.local/bin)`,
+    );
   }
 }
 
 function install(input, options) {
   const { config, resolvedRoot } = buildWorkspaceConfig(input);
-  applyFile(configPath(), `${JSON.stringify(config, null, 2)}\n`, options, 0o600);
+  options = { ...options, sourceRoot: resolvedRoot };
+  installHelpers(resolvedRoot, { ...options, dryRun: true });
+  applyFile(
+    configPath(),
+    `${JSON.stringify(config, null, 2)}\n`,
+    options,
+    0o600,
+  );
   installHelpers(resolvedRoot, options);
-  console.log('Next: run scripts/wt-enforce-signing.mjs --dry-run, then without --dry-run.');
+  console.log(
+    'Next: run scripts/wt-enforce-signing.mjs --dry-run, then without --dry-run.',
+  );
 }
 
 try {
@@ -255,7 +354,11 @@ try {
   } else {
     if (options.update) installHelpers(existingWorkspaceRoot(), options);
     else install(decodeConfig(options.configBase64), options);
-    console.log(options.dryRun ? 'Dry run complete; no files were changed.' : 'Workspace setup complete.');
+    console.log(
+      options.dryRun
+        ? 'Dry run complete; no files were changed.'
+        : 'Workspace setup complete.',
+    );
   }
 } catch (error) {
   console.error(`Error: ${error.message}`);

@@ -10,8 +10,14 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { configuredSourceRoot, DEFAULT_HOST, hostConfig, isConfiguredHost, resolveIdentity } from './wt-config.mjs';
-import { forgejoApi, verifyForgejoIdentity } from './forgejo-api.mjs';
+import {
+  configuredSourceRoot,
+  loadConfig,
+  hostConfig,
+  resolveIdentity,
+} from './wt-config.mjs';
+import { hostOperation } from './host-api.mjs';
+import { parseRemote } from './repository-policy.mjs';
 
 // ---------------------------------------------------------------------------
 // Directory layout
@@ -26,7 +32,10 @@ export function expandHome(inputPath) {
   return inputPath;
 }
 
-export const SOURCE_ROOT = expandHome(configuredSourceRoot());
+const configuredRoot = expandHome(configuredSourceRoot());
+export const SOURCE_ROOT = fs.existsSync(configuredRoot)
+  ? fs.realpathSync(configuredRoot)
+  : configuredRoot;
 export const REPOS_ROOT = path.join(SOURCE_ROOT, 'repos');
 export const TREES_ROOT = path.join(SOURCE_ROOT, 'trees');
 export const SCRIPTS_ROOT = path.join(SOURCE_ROOT, 'scripts');
@@ -55,11 +64,13 @@ export function assertSafeSegment(value, label) {
   }
   if (value.includes('/') || value.includes('\\')) {
     throw new Error(
-      `${label} must not contain path separators ("/" or "\\"). Got: ${JSON.stringify(value)}`
+      `${label} must not contain path separators ("/" or "\\"). Got: ${JSON.stringify(value)}`,
     );
   }
   if (value.includes('..')) {
-    throw new Error(`${label} must not contain "..". Got: ${JSON.stringify(value)}`);
+    throw new Error(
+      `${label} must not contain "..". Got: ${JSON.stringify(value)}`,
+    );
   }
   if (value === '.') {
     throw new Error(`${label} must not be ".". Got: ${JSON.stringify(value)}`);
@@ -80,7 +91,9 @@ export function parseOrgRepo(spec, label = 'org/repo argument') {
   }
   const parts = spec.split('/');
   if (parts.length !== 2) {
-    throw new Error(`${label} must be in the form "org/repo" (exactly one "/"). Got: ${JSON.stringify(spec)}`);
+    throw new Error(
+      `${label} must be in the form "org/repo" (exactly one "/"). Got: ${JSON.stringify(spec)}`,
+    );
   }
   const [org, repo] = parts;
   assertSafeSegment(org, 'org');
@@ -89,21 +102,17 @@ export function parseOrgRepo(spec, label = 'org/repo argument') {
 }
 
 /** Builds the primary-clone path for an org/repo, validating both segments. */
-export function repoPath(org, repo, host = DEFAULT_HOST) {
+export function repoPath(org, repo, host) {
   assertSafeSegment(org, 'org');
   assertSafeSegment(repo, 'repo');
   return resolvePrimaryPath(org, repo, host);
 }
 
-/** True for a configured host other than github.com; its clones live under repos/{host}/. */
-export function isAdditionalHost(host) {
-  return host.toLowerCase() !== DEFAULT_HOST && isConfiguredHost(host);
-}
-
 /** Extract an explicit host without changing legacy positional arguments. */
 export function takeHostOption(argv) {
   const args = [];
-  let host = DEFAULT_HOST, supplied = false;
+  let host,
+    supplied = false;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--host' || argv[i].startsWith('--host=')) {
       if (supplied) throw new Error('--host may only be supplied once.');
@@ -210,14 +219,20 @@ export function isWorkingTreeClean(repoDir) {
 
 /** Current branch name, or null if in detached-HEAD state. */
 export function getCurrentBranch(repoDir) {
-  const branch = gitOrNull(['symbolic-ref', '--quiet', '--short', 'HEAD'], { cwd: repoDir });
+  const branch = gitOrNull(['symbolic-ref', '--quiet', '--short', 'HEAD'], {
+    cwd: repoDir,
+  });
   if (!branch) return null;
   return branch === 'HEAD' ? null : branch;
 }
 
 /** True if a local branch with this name exists in `repoDir`. */
 export function localBranchExists(repoDir, branch) {
-  return gitOrNull(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], { cwd: repoDir }) !== null;
+  return (
+    gitOrNull(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], {
+      cwd: repoDir,
+    }) !== null
+  );
 }
 
 /** Number of files with uncommitted changes (staged, unstaged, or untracked) in `repoDir`. */
@@ -231,10 +246,16 @@ export function getChangedFileCount(repoDir) {
  * @returns {{ upstream: string|null, ahead: number, behind: number }}
  */
 export function getUpstreamAheadBehind(repoDir) {
-  const upstream = gitOrNull(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], { cwd: repoDir });
+  const upstream = gitOrNull(
+    ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'],
+    { cwd: repoDir },
+  );
   if (!upstream) return { upstream: null, ahead: 0, behind: 0 };
 
-  const counts = gitOrNull(['rev-list', '--left-right', '--count', `${upstream}...HEAD`], { cwd: repoDir });
+  const counts = gitOrNull(
+    ['rev-list', '--left-right', '--count', `${upstream}...HEAD`],
+    { cwd: repoDir },
+  );
   if (!counts) return { upstream, ahead: 0, behind: 0 };
 
   const [behind, ahead] = counts.split(/\s+/).map(Number);
@@ -248,9 +269,13 @@ export function getUpstreamAheadBehind(repoDir) {
  * repo name. Returns null if `worktreeDir` isn't a git worktree at all.
  */
 export function getPrimaryRepoDirFromWorktree(worktreeDir) {
-  const commonDir = gitOrNull(['rev-parse', '--git-common-dir'], { cwd: worktreeDir });
+  const commonDir = gitOrNull(['rev-parse', '--git-common-dir'], {
+    cwd: worktreeDir,
+  });
   if (!commonDir) return null;
-  const absCommonDir = path.isAbsolute(commonDir) ? commonDir : path.resolve(worktreeDir, commonDir);
+  const absCommonDir = path.isAbsolute(commonDir)
+    ? commonDir
+    : path.resolve(worktreeDir, commonDir);
   // absCommonDir is the primary repo's ".git" directory even when resolved
   // from inside one of its linked worktrees.
   return path.dirname(absCommonDir);
@@ -262,7 +287,9 @@ export function getPrimaryRepoDirFromWorktree(worktreeDir) {
  * Returns an empty set if `repoDir` isn't a git repo.
  */
 export function getRegisteredWorktreePaths(repoDir) {
-  const output = gitOrNull(['worktree', 'list', '--porcelain'], { cwd: repoDir });
+  const output = gitOrNull(['worktree', 'list', '--porcelain'], {
+    cwd: repoDir,
+  });
   if (!output) return new Set();
 
   const paths = new Set();
@@ -281,12 +308,16 @@ export function getRegisteredWorktreePaths(repoDir) {
  * `git ls-remote --symref` if that ref hasn't been set up locally.
  */
 export function getDefaultBranch(repoDir) {
-  const symref = gitOrNull(['symbolic-ref', 'refs/remotes/origin/HEAD'], { cwd: repoDir });
+  const symref = gitOrNull(['symbolic-ref', 'refs/remotes/origin/HEAD'], {
+    cwd: repoDir,
+  });
   if (symref) {
     return symref.replace(/^refs\/remotes\/origin\//, '');
   }
 
-  const lsRemote = gitOrNull(['ls-remote', '--symref', 'origin', 'HEAD'], { cwd: repoDir });
+  const lsRemote = gitOrNull(['ls-remote', '--symref', 'origin', 'HEAD'], {
+    cwd: repoDir,
+  });
   if (lsRemote) {
     const match = lsRemote.match(/^ref:\s+refs\/heads\/(\S+)\s+HEAD/m);
     if (match) return match[1];
@@ -294,7 +325,7 @@ export function getDefaultBranch(repoDir) {
 
   throw new Error(
     `Could not determine the default branch for the repo at ${repoDir}. ` +
-      `Try running "git fetch origin" in that directory first.`
+      `Try running "git fetch origin" in that directory first.`,
   );
 }
 
@@ -368,16 +399,15 @@ export function listPrimaryRepos() {
   const entries = [];
   for (const org of listSubdirNames(REPOS_ROOT)) {
     const orgDir = path.join(REPOS_ROOT, org);
-    if (isAdditionalHost(org)) {
-      for (const owner of listSubdirNames(orgDir)) {
-        for (const repo of listSubdirNames(path.join(orgDir, owner))) {
-          entries.push({ host: org.toLowerCase(), org: owner, repo, path: path.join(orgDir, owner, repo) });
-        }
-      }
-      continue;
-    }
     for (const repo of listSubdirNames(orgDir)) {
-      entries.push({ org, repo, path: path.join(orgDir, repo) });
+      const dir = path.join(orgDir, repo);
+      let host;
+      try {
+        host = parseRemote(
+          git(['config', '--get', 'remote.origin.url'], { cwd: dir }),
+        ).host;
+      } catch {}
+      entries.push({ host, org, repo, path: dir });
     }
   }
   return entries;
@@ -411,30 +441,41 @@ export function commandExists(cmd) {
   return runCmdOrNull(locator, [cmd]) !== null;
 }
 
-/** Compare filesystem names as GitHub identities, without changing display spelling. */
+/** Compare filesystem names as repository identities, without changing display spelling. */
 export const sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
 
 function matchingEntries(parent, name) {
   if (!fs.existsSync(parent)) return [];
-  return fs.readdirSync(parent).filter(entry => sameName(entry, name)).map(entry => path.join(parent, entry));
+  return fs
+    .readdirSync(parent)
+    .filter((entry) => sameName(entry, name))
+    .map((entry) => path.join(parent, entry));
 }
 
 function uniqueDirectory(parent, name, { exact = false } = {}) {
   assertSafeSegment(name, 'path segment');
   const matches = matchingEntries(parent, name);
-  if (matches.length > 1) throw new Error(`Case collision; reconcile these paths before continuing:\n${matches.join('\n')}`);
+  if (matches.length > 1)
+    throw new Error(
+      `Case collision; reconcile these paths before continuing:\n${matches.join('\n')}`,
+    );
   if (!matches.length) return path.join(parent, name);
   const selected = matches[0];
-  if (!fs.lstatSync(selected).isDirectory()) throw new Error(`Expected a real directory (not a file or symlink): ${selected}`);
+  if (!fs.lstatSync(selected).isDirectory())
+    throw new Error(
+      `Expected a real directory (not a file or symlink): ${selected}`,
+    );
   if (exact && path.basename(selected) !== name) {
-    throw new Error(`Ticket/branch case mismatch: use ${path.basename(selected)} exactly (${selected}).`);
+    throw new Error(
+      `Ticket/branch case mismatch: use ${path.basename(selected)} exactly (${selected}).`,
+    );
   }
   return selected;
 }
 
 /** SSH clone URL for a routed owner/repo. */
 export function cloneUrl(org, repo, identity) {
-  return `git@${identity.sshHost}:${org}/${repo}.git`;
+  return `${identity.sshUser}@${identity.sshHost}:${org}/${repo}.git`;
 }
 
 /**
@@ -442,96 +483,114 @@ export function cloneUrl(org, repo, identity) {
  * host or one of its configured aliases. The one origin check every helper uses.
  */
 export function originMatches(url, org, repo, identity) {
-  const normalized = value => value.replace(/^ssh:\/\/git@([^/:]+)(?::(\d+))?\//, (all, name, port) =>
-    !port || Number(port) === (identity.sshPort ?? 22) ? `git@${name}:` : all).replace(/\.git$/, '').toLowerCase();
-  const accepted = [identity.sshHost, ...(identity.sshHostAliases ?? [])]
-    .map(sshHost => normalized(`git@${sshHost}:${org}/${repo}.git`));
-  return accepted.includes(normalized(url));
+  try {
+    const remote = parseRemote(url);
+    return (
+      remote.protocol === 'ssh:' &&
+      sameName(remote.org, org) &&
+      sameName(remote.repo, repo) &&
+      remote.identity.id === identity.id
+    );
+  } catch {
+    return false;
+  }
 }
 
-export function validatePrimary(repoDir, org, repo, host = DEFAULT_HOST) {
-  const identity = resolveIdentity(org, host);
+export function validatePrimary(repoDir, org, repo, host) {
+  const identity = resolveIdentity(org, host, repo);
   const url = git(['remote', 'get-url', 'origin'], { cwd: repoDir });
   if (!originMatches(url, org, repo, identity)) {
-    throw new Error(`Unexpected origin at ${repoDir}: ${url}; expected ${cloneUrl(org, repo, identity)}`);
+    throw new Error(
+      `Unexpected origin at ${repoDir}: ${url}; expected ${cloneUrl(org, repo, identity)}`,
+    );
   }
   const root = git(['rev-parse', '--show-toplevel'], { cwd: repoDir });
   const common = getPrimaryRepoDirFromWorktree(repoDir);
-  if (fs.realpathSync(root) !== fs.realpathSync(repoDir) || !common || fs.realpathSync(common) !== fs.realpathSync(repoDir)) {
+  if (
+    fs.realpathSync(root) !== fs.realpathSync(repoDir) ||
+    !common ||
+    fs.realpathSync(common) !== fs.realpathSync(repoDir)
+  ) {
     throw new Error(`Not a primary clone: ${repoDir}`);
   }
 }
 
 /** Resolve a legacy path without network access; never prefer an exact match over ambiguity. */
-export function resolvePrimaryPath(org, repo, host = DEFAULT_HOST) {
+export function resolvePrimaryPath(org, repo, host) {
   assertSafeSegment(org, 'org');
   assertSafeSegment(repo, 'repo');
-  host = hostConfig(host).host;
-  const root = host === DEFAULT_HOST ? REPOS_ROOT : uniqueDirectory(REPOS_ROOT, host);
-  const ownerDir = uniqueDirectory(root, org);
+  host = resolveIdentity(org, host, repo).host;
+  const root = REPOS_ROOT;
+  const ownerName =
+    loadConfig().ownerDirectories[`${host}/${org}`.toLowerCase()] ?? org;
+  const ownerDir = uniqueDirectory(root, ownerName);
   const result = uniqueDirectory(ownerDir, repo);
   if (fs.existsSync(result)) validatePrimary(result, org, repo, host);
   return result;
 }
 
 /** A new clone must use names obtained through the routed account. */
-export function canonicalRepository(org, repo, run = runCmd, host = DEFAULT_HOST, api = forgejoApi) {
-  const identity = resolveIdentity(org, host);
-  if (identity.provider === 'forgejo') {
-    verifyForgejoIdentity(identity, api);
-    const result = api(identity.host, `repos/${encodeURIComponent(org)}/${encodeURIComponent(repo)}`, 'GET', undefined, identity.login);
-    const canonical = parseOrgRepo(result.full_name);
-    if (!sameName(org, canonical.org) || !sameName(repo, canonical.repo)) throw new Error(`Repository redirected to ${result.full_name}; review routing before retrying with that name.`);
-    return canonical;
-  }
-  const env = { ...process.env, GH_PROMPT_DISABLED: '1' };
-  for (const key of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GH_HOST', 'GH_DEBUG']) delete env[key];
-  let token;
-  try { token = run('gh', ['auth', 'token', '--hostname', 'github.com', '--user', identity.ghUser], { env }); }
-  catch { throw new Error(`Cannot obtain stored token for ${identity.ghUser}.`); }
-  if (!token) throw new Error(`No stored token for ${identity.ghUser}.`);
-  const apiEnv = { ...env, GH_TOKEN: token };
-  try {
-    const actual = JSON.parse(run('gh', ['api', '--hostname', 'github.com', 'user'], { env: apiEnv }));
-    if (!sameName(actual.login, identity.ghUser)) throw new Error('GitHub token identity mismatch.');
-    const result = JSON.parse(run('gh', ['api', '--hostname', 'github.com', `repos/${org}/${repo}`], { env: apiEnv }));
-    const canonical = parseOrgRepo(result.full_name);
-    if (!sameName(org, canonical.org) || !sameName(repo, canonical.repo)) throw new Error(`Repository redirected to ${result.full_name}; review routing before retrying with that name.`);
-    return canonical;
-  } catch (error) { throw new Error(error.message.split(token).join('[REDACTED]')); }
+export function canonicalRepository(org, repo, run, host, api = hostOperation) {
+  const identity = resolveIdentity(org, host, repo);
+  const result = api(identity, 'repository', { owner: org, repo });
+  const canonical = parseOrgRepo(result.full_name);
+  if (!sameName(org, canonical.org) || !sameName(repo, canonical.repo))
+    throw new Error('Repository redirected; review routing before retrying.');
+  return canonical;
 }
 
 /** One workspace lock covers both owner and ticket namespaces; competing creators retry. */
 export function withWorkspaceLock(action) {
   fs.mkdirSync(SOURCE_ROOT, { recursive: true });
   const lock = path.join(SOURCE_ROOT, '.wt-create.lock');
-  try { fs.mkdirSync(lock); }
-  catch (error) {
+  try {
+    fs.mkdirSync(lock);
+  } catch (error) {
     if (error.code !== 'EEXIST') throw error;
-    throw new Error(`Workspace creation is locked: ${lock}. Retry after the other command finishes; if it crashed, verify no creator is running before removing this lock.`);
+    throw new Error(
+      `Workspace creation is locked: ${lock}. Retry after the other command finishes; if it crashed, verify no creator is running before removing this lock.`,
+    );
   }
   try {
-    fs.writeFileSync(path.join(lock, 'owner.json'), JSON.stringify({ pid: process.pid, started: new Date().toISOString() }));
+    fs.writeFileSync(
+      path.join(lock, 'owner.json'),
+      JSON.stringify({ pid: process.pid, started: new Date().toISOString() }),
+    );
     return action();
-  } finally { fs.rmSync(lock, { recursive: true }); }
+  } finally {
+    fs.rmSync(lock, { recursive: true });
+  }
 }
 
 export function validateWorktree(worktreeDir, repoDir, branch) {
   const root = git(['rev-parse', '--show-toplevel'], { cwd: worktreeDir });
   const common = getPrimaryRepoDirFromWorktree(worktreeDir);
-  if (fs.realpathSync(root) !== fs.realpathSync(worktreeDir) || !common ||
-      fs.realpathSync(common) !== fs.realpathSync(repoDir) ||
-      getCurrentBranch(worktreeDir) !== branch ||
-      !getRegisteredWorktreePaths(repoDir).has(path.resolve(worktreeDir))) {
-    throw new Error(`Existing path is not the requested registered worktree on branch ${branch}: ${worktreeDir}`);
+  if (
+    fs.realpathSync(root) !== fs.realpathSync(worktreeDir) ||
+    !common ||
+    fs.realpathSync(common) !== fs.realpathSync(repoDir) ||
+    getCurrentBranch(worktreeDir) !== branch ||
+    !getRegisteredWorktreePaths(repoDir).has(path.resolve(worktreeDir))
+  ) {
+    throw new Error(
+      `Existing path is not the requested registered worktree on branch ${branch}: ${worktreeDir}`,
+    );
   }
 }
 
 export function assertBranchCase(repoDir, branch) {
   git(['check-ref-format', '--branch', branch], { cwd: repoDir });
-  const refs = git(['for-each-ref', '--format=%(refname:strip=2)', 'refs/heads'], { cwd: repoDir }).split('\n');
-  const alternate = refs.find(name => sameName(name, branch) && name !== branch);
-  if (alternate) throw new Error(`Branch case collision: ${alternate} already exists; requested ${branch}.`);
+  const refs = git(
+    ['for-each-ref', '--format=%(refname:strip=2)', 'refs/heads'],
+    { cwd: repoDir },
+  ).split('\n');
+  const alternate = refs.find(
+    (name) => sameName(name, branch) && name !== branch,
+  );
+  if (alternate)
+    throw new Error(
+      `Branch case collision: ${alternate} already exists; requested ${branch}.`,
+    );
 }
 
 /** Report every physical spelling, including split owners whose repositories differ. */
@@ -545,13 +604,16 @@ export function caseCollisions() {
       const entries = groups.get(key) ?? [];
       entries.push(path.join(parent, entry.name));
       groups.set(key, entries);
-      if (depth > 1 && entry.isDirectory()) inspect(path.join(parent, entry.name), depth - 1);
+      if (depth > 1 && entry.isDirectory())
+        inspect(path.join(parent, entry.name), depth - 1);
     }
-    for (const entries of groups.values()) if (entries.length > 1) issues.push(entries);
+    for (const entries of groups.values())
+      if (entries.length > 1) issues.push(entries);
   }
   inspect(REPOS_ROOT, 1);
   if (fs.existsSync(REPOS_ROOT)) {
-    for (const owner of listSubdirNames(REPOS_ROOT)) inspect(path.join(REPOS_ROOT, owner), isAdditionalHost(owner) ? 2 : 1);
+    for (const owner of listSubdirNames(REPOS_ROOT))
+      inspect(path.join(REPOS_ROOT, owner), 1);
   }
   inspect(TREES_ROOT, 3);
   return issues;
@@ -559,11 +621,15 @@ export function caseCollisions() {
 
 export function assertNoCaseCollisions() {
   const issues = caseCollisions();
-  if (issues.length) throw new Error(`Case collisions require reconciliation:\n${issues.map(group => group.join('\n')).join('\n\n')}`);
+  if (issues.length)
+    throw new Error(
+      `Case collisions require reconciliation:\n${issues.map((group) => group.join('\n')).join('\n\n')}`,
+    );
 }
 
 export function reportCaseCollisions() {
-  for (const group of caseCollisions()) console.error(`Case collision:\n${group.join('\n')}`);
+  for (const group of caseCollisions())
+    console.error(`Case collision:\n${group.join('\n')}`);
 }
 
 /** Validate primary ownership through metadata before a worktree mutation. */
@@ -571,9 +637,16 @@ export function validateManagedWorktree(worktreeDir) {
   const primary = getPrimaryRepoDirFromWorktree(worktreeDir);
   if (!primary) throw new Error(`Not a managed worktree: ${worktreeDir}`);
   const parts = path.relative(REPOS_ROOT, primary).split(path.sep);
-  const additional = parts.length === 3 && isAdditionalHost(parts[0]);
-  if ((!additional && parts.length !== 2) || parts.includes('..')) throw new Error(`Primary outside managed repos: ${primary}`);
-  const resolved = additional ? repoPath(parts[1], parts[2], parts[0]) : repoPath(...parts);
-  validateWorktree(worktreeDir, resolved, path.basename(path.dirname(worktreeDir)));
+  if (parts.length !== 2 || parts.includes('..'))
+    throw new Error(`Primary outside managed repos: ${primary}`);
+  const metadata = parseRemote(
+    git(['config', '--get', 'remote.origin.url'], { cwd: primary }),
+  );
+  const resolved = repoPath(metadata.org, metadata.repo, metadata.host);
+  validateWorktree(
+    worktreeDir,
+    resolved,
+    path.basename(path.dirname(worktreeDir)),
+  );
   return resolved;
 }

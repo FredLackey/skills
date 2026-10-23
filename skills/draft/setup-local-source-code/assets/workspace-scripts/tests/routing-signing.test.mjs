@@ -1,164 +1,268 @@
-import { FORGE_HOST, testConfig } from './helpers/test-config.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { normalizeConfig } from '../lib/wt-config.mjs';
 import { workspaceFixture } from './helpers/workspace-fixture.mjs';
 
-function fakeNetworkGit(f) {
-  // Intercepts network operations only; everything else runs real Git.
-  const bin = path.join(f.root, 'bin');
-  fs.mkdirSync(bin, { recursive: true });
-  fs.writeFileSync(path.join(bin, 'git'), `#!/usr/bin/env node
-const {spawnSync}=require('child_process');
-const args=process.argv.slice(2);
-if(['fetch','pull','push'].includes(args[0])) process.exit(0);
-const r=spawnSync('/usr/bin/git',args,{stdio:'inherit'}); process.exit(r.status ?? 1);
-`);
-  fs.chmodSync(path.join(bin, 'git'), 0o755);
-  return { ...f.env, PATH: bin + path.delimiter + f.env.PATH };
-}
-
-test('configuration validation rejects defaults, cross-host routes, and shared aliases', () => {
-  const base = testConfig('/tmp/example');
-  assert.throws(() => normalizeConfig({ ...base, defaultIdentity: 'personal' }), /default accounts are not supported/);
-  assert.throws(() => normalizeConfig({ ...base, routes: { 'github.com': { someorg: 'forge' } } }), /belongs to/);
-  assert.throws(() => normalizeConfig({ ...base, routes: { 'github.com': { a: 'personal', A: 'personal' } } }), /more than once/);
-  const shared = structuredClone(base);
-  shared.accounts.employer.sshHostAliases = ['github.com'];
-  assert.throws(() => normalizeConfig(shared), /used by both/);
-  assert.throws(() => normalizeConfig({ ...base, version: 2 }), /version/);
-  assert.throws(() => normalizeConfig({ ...base, settings: { commitAndPush: 'yes' } }), /commitAndPush/);
-  assert.equal(normalizeConfig(base).routes['github.com']['employer-team'], 'employer');
-});
-
-test('an unrouted owner fails closed with the command that fixes it', async t => {
-  const f = await workspaceFixture(t);
-  const config = await f.importScript('lib/wt-config.mjs');
-  assert.throws(() => config.resolveIdentity('Unrouted-Org'), /No route for owner "Unrouted-Org".*\n.*wt-route\.mjs add Unrouted-Org \{account\}/);
-  assert.throws(() => config.resolveIdentity('Unrouted', FORGE_HOST), new RegExp(`--host ${FORGE_HOST.replaceAll('.', '\\.')}`));
-  assert.equal(config.findIdentity('Unrouted-Org'), null);
-  assert.equal(config.resolveIdentity('EXAMPLEORG').id, 'personal');
-  const created = f.command('wt-create.mjs', 'Unrouted-Org/Tools', 'client', 'TASK-1');
-  assert.equal(created.status, 1);
-  assert.match(created.stderr, /wt-route\.mjs add Unrouted-Org/);
-  assert.equal(fs.existsSync(path.join(f.root, 'repos', 'Unrouted-Org')), false);
-});
-
-test('wt-route adds and lists routes, refuses silent changes, and refreshes includes', async t => {
-  const f = await workspaceFixture(t);
-  const added = f.command('wt-route.mjs', 'add', 'New-Org', 'employer');
-  assert.equal(added.status, 0, added.stderr);
-  assert.match(added.stdout, /ADD {5}github\.com: New-Org -> employer/);
-  assert.equal(JSON.parse(fs.readFileSync(f.configFile, 'utf8')).routes['github.com']['new-org'], 'employer');
-  assert.equal(fs.statSync(f.configFile).mode & 0o777, 0o600);
-  const routes = fs.readFileSync(path.join(path.dirname(f.configFile), 'git', 'routes.gitconfig'), 'utf8');
-  assert.match(routes, new RegExp(`gitdir/i:${f.root.replaceAll('/', '\\/')}\\/repos\\/new-org\\/`));
-  assert.equal(f.command('wt-route.mjs', 'add', 'new-org', 'employer').status, 0);
-  const changed = f.command('wt-route.mjs', 'add', 'New-Org', 'personal');
-  assert.equal(changed.status, 1);
-  assert.match(changed.stderr, /already routed to employer/);
-  const wrongHost = f.command('wt-route.mjs', 'add', 'Other', 'forge');
-  assert.equal(wrongHost.status, 1);
-  assert.match(wrongHost.stderr, /Unknown account "forge" on github\.com/);
-  assert.equal(f.command('wt-route.mjs', 'add', 'Other', 'forge', '--host', FORGE_HOST).status, 0);
-  const listed = f.command('wt-route.mjs', 'list', '--host', FORGE_HOST);
-  assert.match(listed.stdout, /other -> forge/);
-  assert.doesNotMatch(listed.stdout, /new-org/);
-});
-
-test('workstation signing applies to primaries and their worktrees; overrides are reported and removable', async t => {
-  const f = await workspaceFixture(t);
-  const global = fs.readFileSync(f.env.GIT_CONFIG_GLOBAL, 'utf8');
-  assert.match(global, /routes\.gitconfig/);
-  const dir = f.primary('ExampleOrg', 'Tools');
-  const employer = f.primary('Employer-Team', 'Api', 'github.com', 'github.com-employer');
-  const wt = path.join(f.root, 'trees', 'client', 'TASK-1', 'Tools');
-  fs.mkdirSync(path.dirname(wt), { recursive: true });
-  f.git(dir, 'worktree', 'add', '-b', 'TASK-1', wt);
-  for (const [cwd, email] of [[dir, 'test@example.invalid'], [wt, 'test@example.invalid'], [employer, 'work@example.invalid']]) {
-    assert.equal(f.git(cwd, 'config', 'user.email'), email);
-    assert.equal(f.git(cwd, 'config', 'gpg.format'), 'ssh');
-    assert.equal(f.git(cwd, 'config', 'commit.gpgsign'), 'true');
-    assert.equal(f.git(cwd, 'config', 'tag.gpgsign'), 'true');
+test('real SSH commits and tags use repository identity anywhere on disk and in linked worktrees', (t) => {
+  const f = workspaceFixture(t);
+  for (const [owner, host, account] of [
+    ['personalorg', 'alpha.example', 'personal'],
+    ['team', 'alpha.example', 'work'],
+    ['team', 'beta.example', 'second'],
+    ['thirdteam', 'gamma.example', 'third'],
+  ]) {
+    const dir = f.repository(
+      owner,
+      'Tools',
+      host,
+      path.join(f.root, 'outside', account, 'checkout'),
+    );
+    assert.equal(f.git(dir, 'config', 'user.email'), `${account}@example.test`);
+    assert.equal(f.git(dir, 'log', '-1', '--format=%G?'), 'G');
+    f.git(dir, 'verify-commit', 'HEAD');
+    f.git(dir, 'tag', 'release', '-m', 'Release');
+    f.git(dir, 'verify-tag', 'release');
+    const wt = path.join(f.root, 'worktree-' + account);
+    f.git(dir, 'worktree', 'add', '-b', 'change', wt);
+    f.git(wt, 'commit', '--allow-empty', '-m', 'Worktree change');
+    f.git(wt, 'verify-commit', 'HEAD');
+    assert.equal(
+      f.git(wt, 'config', 'user.signingkey'),
+      f.config.accounts[account].sshKeyPath,
+    );
   }
-  assert.match(f.git(employer, 'config', 'user.signingkey'), /test-employer$/);
-  const ok = f.command('wt-enforce-signing.mjs', '--dry-run');
-  assert.equal(ok.status, 0, ok.stderr);
-  assert.match(ok.stdout, /2 of 2 primary clone/);
-
-  f.git(dir, 'config', 'user.email', 'stale@example.invalid');
-  const drift = f.command('wt-enforce-signing.mjs', '--dry-run');
-  assert.equal(drift.status, 1);
-  assert.match(drift.stderr, /DRIFT {3}ExampleOrg\/Tools \(personal\): user\.email=stale@example\.invalid/);
-  assert.equal(f.git(dir, 'config', 'user.email'), 'stale@example.invalid');
-  const fixed = f.command('wt-enforce-signing.mjs', '--remove-local-overrides');
-  assert.equal(fixed.status, 0, fixed.stderr);
-  assert.match(fixed.stdout, /UNSET {3}ExampleOrg\/Tools: user\.email/);
-  assert.equal(f.git(wt, 'config', 'user.email'), 'test@example.invalid');
-
-  f.primary('Stray', 'Repo');
-  const unrouted = f.command('wt-enforce-signing.mjs', '--dry-run');
-  assert.equal(unrouted.status, 1);
-  assert.match(unrouted.stderr, /UNROUTED Stray\/Repo/);
 });
 
-test('helpers refuse to clone before workstation signing is installed', async t => {
-  const f = await workspaceFixture(t, { installSigning: false });
-  f.primary('ExampleOrg', 'Tools');
-  const result = f.command('wt-create.mjs', 'ExampleOrg/Tools', 'client', 'TASK-1');
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /Run wt-enforce-signing\.mjs/);
+test('mixed remotes reject signing until explicitly bound; no-remote and unknown repos fail', (t) => {
+  const f = workspaceFixture(t);
+  const dir = f.repository();
+  f.git(dir, 'remote', 'add', 'upstream', 'git@alpha.example:team/Tools.git');
+  let result = f.runGit(dir, ['commit', '--allow-empty', '-m', 'Ambiguous']);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /different identities/);
+  result = spawnSync(
+    process.execPath,
+    [path.join(f.scripts, 'wt-identity.mjs'), 'bind', 'personal'],
+    { cwd: dir, env: f.env, encoding: 'utf8' },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  f.git(dir, 'commit', '--allow-empty', '-m', 'Bound');
+  f.git(dir, 'verify-commit', 'HEAD');
+  assert.equal(f.git(dir, 'config', 'user.email'), 'personal@example.test');
+  for (const remote of [null, 'git@alpha.example:unknown/Repo.git']) {
+    const unknown = path.join(
+      f.root,
+      'unknown-' + (remote ? 'remote' : 'local'),
+    );
+    fs.mkdirSync(unknown);
+    f.git(unknown, 'init');
+    if (remote) f.git(unknown, 'remote', 'add', 'origin', remote);
+    assert.notEqual(
+      f.runGit(unknown, ['commit', '--allow-empty', '-m', 'Must fail']).status,
+      0,
+    );
+  }
 });
 
-test('wt-sync --strict fails on a skipped update and --verify-branch checks the pushed commit', async t => {
-  const f = await workspaceFixture(t);
-  const dir = f.primary('ExampleOrg', 'Tools');
-  const env = fakeNetworkGit(f);
-  const sync = (...args) => spawnSync(process.execPath, [path.join(f.scripts, 'wt-sync.mjs'), 'ExampleOrg/Tools', ...args], { env, encoding: 'utf8' });
-
-  assert.equal(sync().status, 0);
-  f.git(dir, 'checkout', '-q', '-b', 'side');
-  const lenient = sync();
-  assert.equal(lenient.status, 0);
-  assert.match(lenient.stdout, /Skipped fast-forward/);
-  const strict = sync('--strict');
-  assert.equal(strict.status, 2);
-  assert.match(strict.stderr, /Skipped fast-forward/);
-  f.git(dir, 'checkout', '-q', 'main');
-
-  f.git(dir, 'branch', 'TASK-1');
-  const missing = sync('--strict', '--verify-branch', 'TASK-1');
-  assert.equal(missing.status, 3);
-  assert.match(missing.stderr, /origin\/TASK-1 does not exist/);
-  f.git(dir, 'update-ref', 'refs/remotes/origin/TASK-1', 'refs/heads/TASK-1');
-  const verified = sync('--strict', '--verify-branch', 'TASK-1');
-  assert.equal(verified.status, 0, verified.stderr);
-  assert.match(verified.stdout, /Verified: origin\/TASK-1 matches/);
-  f.git(dir, '-c', 'user.name=T', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false',
-    'commit', '-q', '--allow-empty', '-m', 'Unpushed');
-  const head = f.git(dir, 'rev-parse', 'HEAD');
-  const mismatch = sync('--verify-branch', 'TASK-1', '--commit', head);
-  assert.equal(mismatch.status, 3);
-  assert.match(mismatch.stderr, /but the pushed commit is/);
-  assert.equal(sync('--commit', head).status, 1);
+test('exact repository exceptions, casing, raw URL forms and aliases choose one signing key', (t) => {
+  const f = workspaceFixture(t, (c) => {
+    c.repositories['alpha.example/team/exception'] = 'personal';
+  });
+  for (const [i, url] of [
+    'git@alpha.example:TEAM/EXCEPTION.git',
+    'ssh://git@alpha.example/team/exception',
+    'https://alpha.example/team/exception.git',
+    'git@personal.alpha.example:team/exception.git',
+  ].entries()) {
+    const dir = path.join(f.root, 'form-' + i);
+    fs.mkdirSync(dir);
+    f.git(dir, 'init');
+    f.git(dir, 'remote', 'add', 'origin', url);
+    f.git(dir, 'commit', '--allow-empty', '-m', 'Exception');
+    assert.equal(f.git(dir, 'config', 'user.email'), 'personal@example.test');
+    f.git(dir, 'verify-commit', 'HEAD');
+  }
 });
 
-test('PR preflight accepts a configured SSH alias and still rejects other hosts', async t => {
-  const f = await workspaceFixture(t);
-  const dir = f.primary('Employer-Team', 'Api', 'github.com', 'github-employer-legacy');
-  const wt = path.join(f.root, 'trees', 'client', 'TASK-9', 'Api');
-  fs.mkdirSync(path.dirname(wt), { recursive: true });
-  f.git(dir, 'worktree', 'add', '-b', 'TASK-9', wt);
-  const body = path.join(f.root, 'body.md');
-  fs.writeFileSync(body, 'Body\n');
-  const accepted = f.command('wt-pr-create.mjs', 'client', 'TASK-9', 'main', '--body-file', body, '--dry-run');
-  assert.equal(accepted.status, 0, accepted.stderr);
-  assert.match(accepted.stdout, /Validated 1 repo worktree/);
-  f.git(dir, 'remote', 'set-url', 'origin', 'git@github.com:Employer-Team/Api.git');
-  const rejected = f.command('wt-pr-create.mjs', 'client', 'TASK-9', 'main', '--body-file', body, '--dry-run');
-  assert.equal(rejected.status, 1);
-  assert.match(rejected.stderr, /expected the employer account's SSH host "github\.com-employer" or an alias/);
+test('policy guard refuses a manually overridden key; ordinary failure never disables signing', (t) => {
+  const f = workspaceFixture(t);
+  const dir = f.repository();
+  f.git(
+    dir,
+    'config',
+    '--local',
+    'user.signingkey',
+    f.config.accounts.work.sshKeyPath,
+  );
+  const result = f.runGit(dir, ['commit', '--allow-empty', '-m', 'Wrong key']);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /does not match/);
+  assert.equal(f.git(dir, 'config', 'commit.gpgsign'), 'true');
+});
+
+test('new owner routes refresh native signing selection without path assumptions', (t) => {
+  const f = workspaceFixture(t);
+  const result = f.command('wt-route.mjs', 'add', 'neworg', 'work');
+  assert.equal(result.status, 0, result.stderr);
+  const dir = f.repository('neworg', 'New');
+  f.git(dir, 'verify-commit', 'HEAD');
+  assert.equal(f.git(dir, 'config', 'user.email'), 'work@example.test');
+});
+
+test('actual committer overrides are rejected while original authors can be preserved', (t) => {
+  const f = workspaceFixture(t);
+  const dir = f.repository();
+  const wrong = f.runGit(
+    dir,
+    ['commit', '--allow-empty', '-m', 'Wrong committer'],
+    { GIT_COMMITTER_EMAIL: 'other@example.test' },
+  );
+  assert.notEqual(wrong.status, 0);
+  assert.match(wrong.stderr, /Committer or tagger/);
+  const replay = f.runGit(
+    dir,
+    ['commit', '--allow-empty', '-m', 'Preserved author'],
+    {
+      GIT_AUTHOR_NAME: 'Original Author',
+      GIT_AUTHOR_EMAIL: 'original@example.test',
+    },
+  );
+  assert.equal(replay.status, 0, replay.stderr);
+  f.git(dir, 'verify-commit', 'HEAD');
+  assert.equal(
+    f.git(dir, 'log', '-1', '--format=%ae'),
+    'original@example.test',
+  );
+});
+
+test('historical signatures remain trusted when a persona key rotates', (t) => {
+  const f = workspaceFixture(t);
+  const dir = f.repository();
+  const old = f.git(dir, 'rev-parse', 'HEAD');
+  const key = path.join(f.root, 'keys/id_personalnext');
+  const generated = spawnSync('ssh-keygen', [
+    '-q',
+    '-t',
+    'ed25519',
+    '-N',
+    '',
+    '-f',
+    key,
+  ]);
+  assert.equal(generated.status, 0);
+  f.config.accounts.personal.sshKeyPath = key;
+  fs.writeFileSync(f.configFile, JSON.stringify(f.config));
+  const result = f.command('wt-enforce-signing.mjs');
+  assert.equal(result.status, 0, result.stderr);
+  f.git(dir, 'verify-commit', old);
+  f.git(dir, 'commit', '--allow-empty', '-m', 'New key');
+  f.git(dir, 'verify-commit', 'HEAD');
+});
+
+test('one persona can use the same key across hosts without ambiguous signing', (t) => {
+  const f = workspaceFixture(t, (c) => {
+    for (const field of ['gitName', 'gitEmail', 'sshKeyPath'])
+      c.accounts.second[field] = c.accounts.personal[field];
+  });
+  const dir = f.repository();
+  f.git(dir, 'remote', 'add', 'upstream', 'git@beta.example:team/Tools.git');
+  f.git(dir, 'commit', '--allow-empty', '-m', 'Same persona');
+  f.git(dir, 'verify-commit', 'HEAD');
+});
+
+test('Git-invoked SSH routing selects the endpoint identity, including casing and exact exceptions', (t) => {
+  const f = workspaceFixture(t, (c) => {
+    c.repositories['alpha.example/team/exception'] = 'personal';
+  });
+  const bin = path.join(f.root, 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(
+    path.join(bin, 'ssh'),
+    '#!/usr/bin/env node\nconst accounts = ' +
+      JSON.stringify(f.config.accounts) +
+      '; const a = process.argv.slice(2); if (a.includes("-G")) { const account = Object.values(accounts).find(v => a.includes("git@" + v.sshHost)); process.stdout.write("hostname " + account.host + "\\nuser git\\nport " + (account.host === "beta.example" ? 2222 : 22) + "\\nidentitiesonly yes\\nidentityfile " + account.sshKeyPath + "\\n"); } else process.stdout.write(JSON.stringify(a));\n',
+    { mode: 0o755 },
+  );
+  const run = (destination, command, ...options) =>
+    spawnSync(
+      process.execPath,
+      [path.join(f.scripts, 'wt-ssh.mjs'), ...options, destination, command],
+      {
+        env: { ...f.env, PATH: bin + path.delimiter + f.env.PATH },
+        encoding: 'utf8',
+      },
+    );
+  let result = run('git@alpha.example', "git-upload-pack 'TEAM/EXCEPTION.git'");
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(JSON.parse(result.stdout).includes('git@personal.alpha.example'));
+  result = run('git@alpha.example', "git-receive-pack 'TEAM/Ordinary.git'");
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(JSON.parse(result.stdout).includes('git@work.alpha.example'));
+  result = run(
+    'git@beta.example',
+    "git-upload-pack 'team/Tools.git'",
+    '-p',
+    '2222',
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(JSON.parse(result.stdout).includes('git@second.beta.example'));
+  assert.equal(
+    run('git@alpha.example', "git-upload-pack 'unknown/Repo.git'").status,
+    1,
+  );
+  assert.equal(
+    run('git@personal.alpha.example', "git-upload-pack 'team/Ordinary.git'")
+      .status,
+    1,
+  );
+});
+
+test('post-push verification retains strict skipped/mismatched exit codes and preserves dirty work', (t) => {
+  const f = workspaceFixture(t);
+  const dir = f.repository();
+  f.git(dir, 'branch', 'TASK');
+  f.git(dir, 'update-ref', 'refs/remotes/origin/TASK', 'HEAD');
+  const bin = path.join(f.root, 'sync-bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(
+    path.join(bin, 'git'),
+    '#!/usr/bin/env node\nconst a=process.argv.slice(2); if (["fetch","pull"].includes(a[0])) process.exit(0); const r=require("node:child_process").spawnSync("git",a,{env:{...process.env,PATH:' +
+      JSON.stringify(f.env.PATH) +
+      '},stdio:"inherit"}); process.exit(r.status ?? 1);\n',
+    { mode: 0o755 },
+  );
+  const run = () =>
+    spawnSync(
+      process.execPath,
+      [
+        path.join(f.scripts, 'wt-sync.mjs'),
+        'personalorg/Tools',
+        '--strict',
+        '--verify-branch',
+        'TASK',
+      ],
+      {
+        env: { ...f.env, PATH: bin + path.delimiter + f.env.PATH },
+        encoding: 'utf8',
+      },
+    );
+  let result = run();
+  assert.equal(result.status, 0, result.stderr);
+  f.git(dir, 'switch', 'TASK');
+  result = run();
+  assert.equal(result.status, 2, result.stderr);
+  f.git(dir, 'commit', '--allow-empty', '-m', 'Unpushed change');
+  result = run();
+  assert.equal(result.status, 3, result.stderr);
+  f.git(dir, 'update-ref', 'refs/remotes/origin/TASK', 'HEAD');
+  f.git(dir, 'switch', 'main');
+  fs.writeFileSync(path.join(dir, 'uncommitted.txt'), 'Keep this work');
+  result = run();
+  assert.equal(result.status, 2, result.stderr);
+  assert.equal(
+    fs.readFileSync(path.join(dir, 'uncommitted.txt'), 'utf8'),
+    'Keep this work',
+  );
 });

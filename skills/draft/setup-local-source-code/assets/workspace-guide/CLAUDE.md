@@ -1,8 +1,9 @@
 # Local Source Workspace
 
 This guide is installed by the `setup-local-source-code` skill and is identical
-on every workstation. `AGENTS.md` is the same file. Do not edit it, or any
-installed helper, in place: change the skill, then pull the update (see
+on every workstation unless explicitly corrected locally. `AGENTS.md` is the same
+file. Maintain helpers through the skill and preserve explicit local guide
+corrections when pulling an update (see
 [Updates](#updates)).
 
 Everything personal or machine-specific — accounts, emails, SSH keys, Git
@@ -16,31 +17,27 @@ workspace or into a repository.
 
 ## Layout
 
-```text
-{workspace}/
-├── repos/        primary clones: repos/{owner}/{repo}; other hosts: repos/{host}/{owner}/{repo}
-├── trees/        task worktrees: trees/{client-or-project}/{ticket-id-or-slug}/{repo}
-├── local/        local-only projects: local/{kebab-case-slug}
-├── scripts/      helpers installed by the skill
-├── research/     dated research, indexed by research/TOPICS.md
-└── quarantine/   preserved state from risky repairs (created when first needed)
-```
+Primary clones use `repos/{owner}/{repo}` for every host. Ticket worktrees use
+`trees/{client-or-project}/{ticket-or-slug}/{repo}`. Local-only projects live in
+`local/{slug}`, research under `research/`, installed helpers under `scripts/`,
+and preserved state under `quarantine/`. Host identity is routing metadata,
+not a separate provider area. Refuse collisions between repositories from
+different hosts; never reuse the wrong clone.
 
 ## Rules
 
-- **Primary clones are plumbing.** Never edit files, switch branches, or commit
-  in `repos/`. The helpers manage them.
-- **Repository work happens in a ticket worktree.** A ticket folder
-  (`trees/{client-or-project}/{ticket-id-or-slug}/`) is a plain directory, not a
-  worktree. Each repository in it is a worktree in its own subfolder, and every
-  one of them uses the ticket ID or slug as its branch name. Create them with
-  `wt-create.mjs`; never clone or add worktrees by hand.
+- **Direct clones and repository work are allowed.** Clone specifically requested
+  repositories using the routed account's SSH alias. Work may happen in that
+  checkout; a ticket or worktree is optional. Preserve existing work.
+- **Ticket worktrees are optional isolation.** A ticket folder is a grouping
+  directory; each repository has its own worktree subfolder on the exact ticket
+  branch. `wt-create.mjs` is a convenience, not a mandatory cloning route.
 - **Local-only projects** live directly in `local/{kebab-case-slug}/` with no Git
   repository, commits, or publication unless that intent explicitly changes.
 - **Research reads, it doesn't change.** Research may read code in primary
-  clones (cloning through `wt-create.mjs` first if needed) and writes only under
-  `research/`. Running or changing code requires a real ticket worktree under a
-  client; never create worktrees for research.
+  clones (cloning directly first if needed) and writes only under
+  `research/`. Running or changing code is development and may use a direct checkout or an
+  optional worktree. Research does not require a worktree.
 - **`scripts/` holds only the skill's helpers.** Personal tools belong elsewhere,
   such as `~/.local/bin`.
 - **Preserve before risky repairs.** Before deleting, renaming, or rewriting a
@@ -68,32 +65,37 @@ All helpers are dependency-free Node.js scripts in `scripts/`. Every one accepts
 | `wt-open.mjs {client} {ticket}` | Opens the ticket folder in VS Code. |
 | `wt-audit-paths.mjs` | Reports case-variant duplicate paths; changes nothing. |
 | `wt-route.mjs list` / `add {owner} {account} [--host {host}]` | Shows or adds owner routes in the configuration. |
+| `wt-identity.mjs show` / `bind {account}` | Shows repository identity or binds an explicit account for mixed-account or remote-less repositories. |
 | `wt-enforce-signing.mjs [--dry-run] [--remove-local-overrides]` | Installs the workstation identity/signing configuration and checks every primary against its route. |
 | `clone-mine.mjs [--org {name}] [--user {login}] [--dry-run]` | Clones repositories you have authored commits in, from organizations routed to each account. |
 | `clone-all.mjs [--profile {account}] [--dry-run]` | Clones every repository in routed organizations, whether or not you committed to it. See [Bulk cloning](#bulk-cloning). |
 
-## Accounts and routing
+## Accounts, identity and signing
 
-Every repository owner (organization or user) must be routed to exactly one
-account on its host. There is no default account: an unrouted owner stops the
-helpers with an error that prints the `wt-route.mjs add` command to fix it.
+Every host/owner is routed explicitly to an account; exact repository exceptions
+and explicit local repository bindings take precedence. No host or personal
+account is an implicit fallback. Use `--host` when owner routing is ambiguous.
+All hosts share the same workflow, layout, commands and rules; no provider-specific
+areas, comments or separate setup instructions.
 
-- Never guess a route. Ask the user which account an unrouted owner belongs to,
-  then run the printed command with their answer.
-- Never route an employer or client organization to a personal account, or the
-  reverse, and never use one account's credentials for another account's owners.
-- Clone and push only over SSH, through the account's SSH host or one of its
-  configured aliases.
+Identity keys use `id_{persona-or-company}` and matching `.pub` files. New key
+registration titles use `{Proper Machine Name} ({YYYYMMDD})` on the actual
+registration date. Generic OS labels and `.local` names are invalid. Existing
+registrations retain their dates on verification. Different identities use distinct
+keys; a persona may reuse its key across hosts. Never guess an account or move
+client credentials between identities.
 
-## Identity and signing
+Native Git configuration enables SSH commit/tag signing globally. Repository
+remotes select name, email and signing key regardless of checkout location.
+Git-invoked transport and signing guards check endpoint routing and signing identity.
+Use `wt-identity.mjs bind {account}` for mixed-account or remote-less repositories;
+this creates an approved local identity include. Do not disable signing or use a
+global personal signer to work around missing or ambiguous configuration.
 
-Author identity and SSH signing are configured once per workstation by
-`wt-enforce-signing.mjs`: the global Git configuration includes each account's
-name, email, signing key, `gpg.format=ssh`, and mandatory commit and tag signing
-for every routed owner's directory under `repos/`. Worktrees inherit their
-primary's settings. Repositories carry no identity or signing settings of their
-own; `wt-enforce-signing.mjs --dry-run` reports any that would override the
-workstation, and `--remove-local-overrides` removes them.
+`wt-enforce-signing.mjs --dry-run` audits generated configuration and primary clones.
+The local allowed-signers file includes current and preserved historical trust.
+Git flags can be explicitly overridden; acceptance requirements for SSH-only
+signatures/approved signers require repository-side checks.
 
 ## Completing changes
 
@@ -131,8 +133,8 @@ scope; they do not authorize bypassing the filter.
   complete the normal `clone-mine.mjs` run, report it, and ask before expanding.
 - Skipped repositories are expected results, not missing work.
 
-Creating a worktree for one specifically requested repository still uses
-`wt-create.mjs`.
+The bulk filter does not restrict direct cloning of one specifically requested
+repository. Use `wt-create.mjs` when a task worktree is useful.
 
 ## Path casing
 
@@ -170,7 +172,8 @@ research/
 
 ## Updates
 
-Installed helpers and this guide are never edited on a workstation. Change the
-`setup-local-source-code` skill, merge it, then pull the update into each
-workstation by re-running the skill's setup script in update mode. Update mode
-replaces the helpers and this guide and never touches the configuration.
+Maintain helpers and shared guidance through `setup-local-source-code`, then
+apply reviewed updates. Explicit local guide corrections are allowed and must
+be preserved; never restore superseded restrictions on direct clones or optional
+worktrees. Update mode never changes the external configuration. Incompatible
+configuration requires a preserved full migration before helper deployment.

@@ -1,27 +1,18 @@
-# Workspace Script Tests
+# Workspace script tests
 
-From an installed workspace, run the workspace-script regression checks with:
+Run `node --test scripts/tests/*.test.mjs assets/workspace-scripts/tests/*.test.mjs` from the skill directory,
+or `node --test scripts/tests/*.test.mjs` after installation. Node 24+, Git 2.36+
+and OpenSSH SSH-signing support are required.
 
-```sh
-node --test scripts/tests/*.test.mjs
-```
+The source-only setup/registration suite additionally lives in `scripts/tests/`.
 
-The tests never read or change the developer's settings. `helpers/test-config.mjs`
-points `SOURCE_WORKSPACE_CONFIG` and `GIT_CONFIG_GLOBAL` at temporary files with
-a generated configuration (personal, employer, and Forgejo accounts), and
-`helpers/workspace-fixture.mjs` builds a throwaway workspace with workstation
-signing installed. Tests use fake GitHub and Forgejo responses, fake network Git
-operations, and isolated temporary repositories. They do not contact any host,
-expose stored tokens, create real primary clones, push branches, or create PRs.
+Fixtures isolate HOME, global Git configuration, workspace configuration and API
+credentials. They generate disposable SSH keys and create real signed commits/tags;
+network/API responses are mocked. No real account, credential, checkout or push is used.
 
-- `path-casing` covers legacy reuse, ambiguity, worktree ownership, exact
-  ticket/branch case, canonical metadata, creation locking, additional-host
-  namespaces, and SSH host aliases.
-- `routing-signing` covers configuration validation, fail-closed routing,
-  `wt-route.mjs`, workstation identity and signing (including worktree
-  inheritance and local overrides), `wt-sync.mjs --strict`/`--verify-branch`,
-  and alias acceptance in PR preflight.
-- `forgejo` covers per-host routing, SSH port validation, and draft PR
-  creation/reuse.
-- `clone-mine`, `clone-all`, and `wt-pr-create` cover discovery, credential
-  isolation, argument validation, and PR publishing.
+Coverage includes off-path and linked-worktree identity selection, multiple hosts,
+ambiguous/remoteless repositories, explicit binding, exact exceptions, path collisions,
+shared discovery/authorship filtering, pull-request dry-run and idempotency, registration
+naming/date validation, effective SSH configuration, preserved historical trust and
+transport endpoint selection. On case-insensitive filesystems, creating two physical
+case variants is unavailable; occupied-path refusal is still exercised.

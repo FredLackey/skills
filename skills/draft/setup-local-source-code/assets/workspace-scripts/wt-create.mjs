@@ -17,12 +17,30 @@
 
 import path from 'node:path';
 import { resolveIdentity } from './lib/wt-config.mjs';
-import { assertWorkstationReady, describeDrift, effectiveDrift } from './lib/wt-signing.mjs';
 import {
-  assertSafeSegment, cloneUrl, ensureDirSync,
-  getDefaultBranch, git, isDirectory, localBranchExists, parseOrgRepo,
-  pathExists, repoPath, SOURCE_ROOT, ticketPath, worktreePath,
-  takeHostOption, canonicalRepository, withWorkspaceLock, validateWorktree, assertBranchCase,
+  assertWorkstationReady,
+  describeDrift,
+  effectiveDrift,
+} from './lib/wt-signing.mjs';
+import {
+  assertSafeSegment,
+  cloneUrl,
+  ensureDirSync,
+  getDefaultBranch,
+  git,
+  isDirectory,
+  localBranchExists,
+  parseOrgRepo,
+  pathExists,
+  repoPath,
+  SOURCE_ROOT,
+  ticketPath,
+  worktreePath,
+  takeHostOption,
+  canonicalRepository,
+  withWorkspaceLock,
+  validateWorktree,
+  assertBranchCase,
 } from './lib/wt-lib.mjs';
 
 function usage() {
@@ -34,8 +52,7 @@ function usage() {
     'branched as {ticket-id-or-slug}. Clones {org}/{repo} into',
     `${SOURCE_ROOT}/repos/{org}/{repo} first if it is not already there.`,
     '',
-    'GitHub is the default host. --host selects another configured Git host',
-    `(for example a Forgejo server); its clones live under ${SOURCE_ROOT}/repos/{host}/{owner}/{repo}.`,
+    'Use --host when owner routing is ambiguous. All primary clones use repos/{owner}/{repo}.',
     '',
     'The owner must be routed to an account (see wt-route.mjs). Re-running for an',
     'existing worktree only validates and reports it.',
@@ -47,7 +64,10 @@ function usage() {
 
 function main() {
   const { args, host } = takeHostOption(process.argv.slice(2));
-  if (args.includes('-h') || args.includes('--help')) { console.log(usage()); return; }
+  if (args.includes('-h') || args.includes('--help')) {
+    console.log(usage());
+    return;
+  }
   if (args.length !== 3) throw new Error(usage());
   let { org, repo } = parseOrgRepo(args[0]);
   const [, client, branch] = args;
@@ -56,12 +76,15 @@ function main() {
   git(['check-ref-format', '--branch', branch]);
 
   return withWorkspaceLock(() => {
-    const identity = resolveIdentity(org, host);
+    const identity = resolveIdentity(org, host, repo);
     let repoDir = repoPath(org, repo, host);
     // Inspect ticket occupancy before any clone/configuration mutation.
     let worktreeDir = worktreePath(client, branch, repo);
     if (pathExists(worktreeDir)) {
-      if (!isDirectory(repoDir)) throw new Error(`Worktree path is occupied without the requested primary: ${worktreeDir}`);
+      if (!isDirectory(repoDir))
+        throw new Error(
+          `Worktree path is occupied without the requested primary: ${worktreeDir}`,
+        );
       validateWorktree(worktreeDir, repoDir, branch);
     }
     if (!isDirectory(repoDir)) {
@@ -80,12 +103,16 @@ function main() {
     }
     const drift = effectiveDrift(repoDir, identity);
     if (drift.length && cloned) {
-      throw new Error(`New clone ${repoDir} does not resolve to the ${identity.id} account's identity: ${describeDrift(drift)}. ` +
-        'Check the global Git configuration, then run wt-enforce-signing.mjs --dry-run.');
+      throw new Error(
+        `New clone ${repoDir} does not resolve to the ${identity.id} account's identity: ${describeDrift(drift)}. ` +
+          'Check the global Git configuration, then run wt-enforce-signing.mjs --dry-run.',
+      );
     }
     if (drift.length) {
-      console.warn(`Warning: ${repoDir} overrides the ${identity.id} account's identity: ${describeDrift(drift)}. ` +
-        'Run wt-enforce-signing.mjs --dry-run for details.');
+      console.warn(
+        `Warning: ${repoDir} overrides the ${identity.id} account's identity: ${describeDrift(drift)}. ` +
+          'Run wt-enforce-signing.mjs --dry-run for details.',
+      );
     }
     if (pathExists(worktreeDir)) {
       console.log(`Already exists (no changes made): ${worktreeDir}`);
@@ -97,11 +124,25 @@ function main() {
       git(['worktree', 'add', worktreeDir, branch], { cwd: repoDir });
     } else {
       const defaultBranch = getDefaultBranch(repoDir);
-      git(['worktree', 'add', '-b', branch, worktreeDir, `origin/${defaultBranch}`], { cwd: repoDir });
+      git(
+        [
+          'worktree',
+          'add',
+          '-b',
+          branch,
+          worktreeDir,
+          `origin/${defaultBranch}`,
+        ],
+        { cwd: repoDir },
+      );
     }
     console.log(`Worktree ready: ${worktreeDir} (branch "${branch}")`);
   });
 }
 
-try { main(); }
-catch (error) { console.error(`Error: ${error.message}`); process.exitCode = 1; }
+try {
+  main();
+} catch (error) {
+  console.error(`Error: ${error.message}`);
+  process.exitCode = 1;
+}

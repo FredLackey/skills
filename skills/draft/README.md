@@ -34,17 +34,16 @@ Its structure and workflow are being validated before canary promotion.
 
 ## `setup-local-source-code`
 
-Interviews a developer about their client, GitHub, additional Git host, author,
-and SSH identities, then creates a portable source workspace with primary
-clones, task worktrees, local-only projects, durable research, and
-dependency-free Node.js tools. Personal values live only in one JSON
-configuration file; the helpers and workspace guide are identical everywhere
-and are updated by pulling the skill.
+Configures a portable source workspace with repository-selected native Git/SSH
+identities, mandatory SSH signing defaults, optional task worktrees, durable
+research, and a shared host-neutral command surface. Persona key filenames and
+proper machine/date registration labels are validated by the tooling. Personal
+values and account credentials remain in external workstation configuration.
 
-**Current state:** Draft. Explicit fail-closed owner routing, workstation-level
-SSH signing, additional Forgejo hosts, and update mode are being validated. It
-moves to stable once the structure has needed no modification across its
-author's machines.
+**Current state:** Draft. Schema version 2 adds remote-based identity selection,
+explicit repository bindings, endpoint/signing checks, historical signature trust,
+and one workflow for all configured hosts. Existing installations need a reviewed
+configuration migration before updated helpers are deployed.
 
 ## `setup-shared-skills`
 

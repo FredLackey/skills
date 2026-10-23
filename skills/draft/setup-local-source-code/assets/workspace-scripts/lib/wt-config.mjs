@@ -14,22 +14,32 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {
+  validateKeyPath,
+  machineName,
+  validateIdentityKeys,
+} from './key-policy.mjs';
 
-export const DEFAULT_HOST = 'github.com';
-const PROVIDERS = new Set(['github', 'forgejo']);
+const PROVIDERS = new Set(['github', 'forgejo', 'bitbucket']);
 const SAFE_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const SAFE_OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
 const SAFE_HOST = /^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/;
 
 function expandHome(value) {
   if (value === '~') return os.homedir();
-  if (value.startsWith('~/') || value.startsWith('~\\')) return path.join(os.homedir(), value.slice(2));
+  if (value.startsWith('~/') || value.startsWith('~\\'))
+    return path.join(os.homedir(), value.slice(2));
   return value;
 }
 
 /** Absolute path of the configuration file. */
 export function configPath() {
-  return path.resolve(expandHome(process.env.SOURCE_WORKSPACE_CONFIG || '~/.config/source-workspace/config.json'));
+  return path.resolve(
+    expandHome(
+      process.env.SOURCE_WORKSPACE_CONFIG ||
+        '~/.config/source-workspace/config.json',
+    ),
+  );
 }
 
 /** Directory for generated Git include files, next to the configuration file. */
@@ -38,11 +48,17 @@ export function gitIncludeDir() {
 }
 
 function fail(message) {
-  throw new Error(`Invalid workspace configuration (${configPath()}): ${message}`);
+  throw new Error(
+    `Invalid workspace configuration (${configPath()}): ${message}`,
+  );
 }
 
 function text(value, label) {
-  if (typeof value !== 'string' || !value.trim() || /[\u0000-\u001f\u007f]/.test(value)) {
+  if (
+    typeof value !== 'string' ||
+    !value.trim() ||
+    /[\u0000-\u001f\u007f]/.test(value)
+  ) {
     fail(`${label} must be a non-empty single-line string.`);
   }
   return value.trim();
@@ -50,50 +66,99 @@ function text(value, label) {
 
 /** Validates raw configuration data and returns a normalized copy. */
 export function normalizeConfig(raw) {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) fail('expected a JSON object.');
-  if (raw.version !== 1) fail('version must be 1.');
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+    fail('expected a JSON object.');
+  if (raw.version !== 2)
+    fail(
+      'version must be 2; prepare a preserved configuration migration before installing updated helpers.',
+    );
   if ('defaultIdentity' in raw || 'defaultAccount' in raw) {
     fail('default accounts are not supported; route every owner explicitly.');
   }
   const sourceRoot = text(raw.sourceRoot ?? '~/Source', 'sourceRoot');
-  if (/["\\]/.test(sourceRoot)) fail('sourceRoot must not contain quotes or backslashes.');
+  if (/["\\]/.test(sourceRoot))
+    fail('sourceRoot must not contain quotes or backslashes.');
 
   const settings = { commitAndPush: false, ...(raw.settings ?? {}) };
-  if (typeof settings.commitAndPush !== 'boolean') fail('settings.commitAndPush must be true or false.');
+  if (typeof settings.commitAndPush !== 'boolean')
+    fail('settings.commitAndPush must be true or false.');
 
-  const hosts = { [DEFAULT_HOST]: { provider: 'github' } };
+  const hosts = {};
   for (const [name, value] of Object.entries(raw.hosts ?? {})) {
     const host = name.toLowerCase();
     if (!SAFE_HOST.test(host)) fail(`host name is invalid: ${name}`);
-    if (!value || typeof value !== 'object') fail(`hosts.${name} must be an object.`);
-    if (!PROVIDERS.has(value.provider)) fail(`hosts.${name}.provider must be one of: ${[...PROVIDERS].join(', ')}.`);
-    if (host === DEFAULT_HOST && value.provider !== 'github') fail(`${DEFAULT_HOST} must use the github provider.`);
-    if (value.provider === 'github' && host !== DEFAULT_HOST) fail(`only ${DEFAULT_HOST} may use the github provider.`);
+    if (!value || typeof value !== 'object')
+      fail(`hosts.${name} must be an object.`);
+    if (!PROVIDERS.has(value.provider))
+      fail(
+        `hosts.${name}.provider must be one of: ${[...PROVIDERS].join(', ')}.`,
+      );
     const sshPort = value.sshPort ?? 22;
-    if (!Number.isInteger(sshPort) || sshPort < 1 || sshPort > 65535) fail(`hosts.${name}.sshPort must be a TCP port.`);
-    const entry = { provider: value.provider, sshPort };
-    if (value.provider === 'forgejo') {
-      entry.tokenFile = text(value.tokenFile ?? `~/.config/forgejo/${host}.json`, `hosts.${name}.tokenFile`);
-    }
+    if (!Number.isInteger(sshPort) || sshPort < 1 || sshPort > 65535)
+      fail(`hosts.${name}.sshPort must be a TCP port.`);
+    const sshUser = text(value.sshUser ?? 'git', `hosts.${name}.sshUser`);
+    const sshHostname = text(
+      value.sshHostname ?? host,
+      `hosts.${name}.sshHostname`,
+    );
+    if (!SAFE_HOST.test(sshHostname) || !/^[a-zA-Z0-9_-]+$/.test(sshUser))
+      fail('Invalid SSH endpoint.');
+    const defaults = {
+      github:
+        host === 'github.com'
+          ? 'https://api.github.com/'
+          : `https://${host}/api/v3/`,
+      forgejo: `https://${host}/api/v1/`,
+      bitbucket: 'https://api.bitbucket.org/2.0/',
+    };
+    const apiBase = new URL(value.apiBase ?? defaults[value.provider]);
+    if (
+      apiBase.protocol !== 'https:' ||
+      apiBase.username ||
+      apiBase.password ||
+      apiBase.search ||
+      apiBase.hash
+    )
+      fail(
+        'apiBase must be an HTTPS URL without credentials, query, or fragment.',
+      );
+    const entry = {
+      provider: value.provider,
+      sshPort,
+      sshUser,
+      sshHostname,
+      apiBase: apiBase.href.endsWith('/') ? apiBase.href : `${apiBase.href}/`,
+    };
     hosts[host] = entry;
   }
 
   const accounts = {};
   const sshHosts = new Map();
   for (const [id, value] of Object.entries(raw.accounts ?? {})) {
-    if (!SAFE_ID.test(id)) fail(`account id must use lowercase letters, digits, and single hyphens: ${id}`);
-    if (!value || typeof value !== 'object') fail(`accounts.${id} must be an object.`);
-    const host = text(value.host ?? DEFAULT_HOST, `accounts.${id}.host`).toLowerCase();
-    if (!hosts[host]) fail(`accounts.${id}.host is not a configured host: ${host}`);
+    if (!SAFE_ID.test(id))
+      fail(
+        `account id must use lowercase letters, digits, and single hyphens: ${id}`,
+      );
+    if (!value || typeof value !== 'object')
+      fail(`accounts.${id} must be an object.`);
+    const host = text(value.host, `accounts.${id}.host`).toLowerCase();
+    if (!hosts[host])
+      fail(`accounts.${id}.host is not a configured host: ${host}`);
     const gitEmail = text(value.gitEmail, `accounts.${id}.gitEmail`);
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(gitEmail)) fail(`accounts.${id}.gitEmail must look like an email address.`);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(gitEmail))
+      fail(`accounts.${id}.gitEmail must look like an email address.`);
     const sshHost = text(value.sshHost ?? host, `accounts.${id}.sshHost`);
     const aliases = value.sshHostAliases ?? [];
-    if (!Array.isArray(aliases)) fail(`accounts.${id}.sshHostAliases must be an array.`);
+    if (!Array.isArray(aliases))
+      fail(`accounts.${id}.sshHostAliases must be an array.`);
     for (const alias of [sshHost, ...aliases]) {
-      if (!SAFE_HOST.test(alias)) fail(`accounts.${id} has an invalid SSH host alias: ${alias}`);
+      if (!SAFE_HOST.test(alias))
+        fail(`accounts.${id} has an invalid SSH host alias: ${alias}`);
       const key = alias.toLowerCase();
-      if (sshHosts.has(key)) fail(`SSH host alias ${alias} is used by both ${sshHosts.get(key)} and ${id}.`);
+      if (sshHosts.has(key))
+        fail(
+          `SSH host alias ${alias} is used by both ${sshHosts.get(key)} and ${id}.`,
+        );
       sshHosts.set(key, id);
     }
     accounts[id] = {
@@ -103,8 +168,15 @@ export function normalizeConfig(raw) {
       gitName: text(value.gitName, `accounts.${id}.gitName`),
       gitEmail,
       sshHost,
-      sshHostAliases: aliases.map(alias => text(alias, `accounts.${id}.sshHostAliases`)),
-      sshKeyPath: text(value.sshKeyPath, `accounts.${id}.sshKeyPath`),
+      sshHostAliases: aliases.map((alias) =>
+        text(alias, `accounts.${id}.sshHostAliases`),
+      ),
+      sshKeyPath: validateKeyPath(
+        text(value.sshKeyPath, `accounts.${id}.sshKeyPath`),
+      ),
+      tokenFile: value.tokenFile
+        ? text(value.tokenFile, `accounts.${id}.tokenFile`)
+        : null,
     };
   }
   if (!Object.keys(accounts).length) fail('at least one account is required.');
@@ -114,18 +186,83 @@ export function normalizeConfig(raw) {
   for (const [name, table] of Object.entries(raw.routes ?? {})) {
     const host = name.toLowerCase();
     if (!hosts[host]) fail(`routes.${name} is not a configured host.`);
-    if (!table || typeof table !== 'object' || Array.isArray(table)) fail(`routes.${name} must be an object.`);
+    if (!table || typeof table !== 'object' || Array.isArray(table))
+      fail(`routes.${name} must be an object.`);
     for (const [owner, accountId] of Object.entries(table)) {
-      if (!SAFE_OWNER.test(owner)) fail(`routes.${name} has an invalid owner: ${owner}`);
+      if (!SAFE_OWNER.test(owner))
+        fail(`routes.${name} has an invalid owner: ${owner}`);
       const key = owner.toLowerCase();
-      if (Object.hasOwn(routes[host], key)) fail(`routes.${name} lists ${owner} more than once (owners are case-insensitive).`);
+      if (Object.hasOwn(routes[host], key))
+        fail(
+          `routes.${name} lists ${owner} more than once (owners are case-insensitive).`,
+        );
       const account = accounts[accountId];
-      if (!account) fail(`routes.${name}.${owner} names an unknown account: ${accountId}`);
-      if (account.host !== host) fail(`routes.${name}.${owner} names ${accountId}, which belongs to ${account.host}.`);
+      if (!account)
+        fail(`routes.${name}.${owner} names an unknown account: ${accountId}`);
+      if (account.host !== host)
+        fail(
+          `routes.${name}.${owner} names ${accountId}, which belongs to ${account.host}.`,
+        );
       routes[host][key] = accountId;
     }
   }
-  return { version: 1, sourceRoot, settings, hosts, accounts, routes };
+  const keys = new Map();
+  for (const a of Object.values(accounts)) {
+    const key = path.resolve(expandHome(a.sshKeyPath));
+    const persona = `${a.gitName} <${a.gitEmail}>`;
+    if (keys.has(key) && keys.get(key) !== persona)
+      fail('Different identities must have distinct SSH keys.');
+    keys.set(key, persona);
+  }
+  validateIdentityKeys(accounts);
+  const repositories = {};
+  for (const [coordinate, accountId] of Object.entries(
+    raw.repositories ?? {},
+  )) {
+    const parts = coordinate.split('/');
+    if (
+      parts.length !== 3 ||
+      !hosts[parts[0].toLowerCase()] ||
+      !parts.slice(1).every((p) => SAFE_OWNER.test(p))
+    )
+      fail(`Invalid repository coordinate: ${coordinate}`);
+    if (
+      !accounts[accountId] ||
+      accounts[accountId].host !== parts[0].toLowerCase()
+    )
+      fail(`Invalid repository account: ${coordinate}`);
+    const key = coordinate.toLowerCase();
+    if (repositories[key]) fail(`Duplicate repository: ${coordinate}`);
+    repositories[key] = accountId;
+  }
+  const ownerDirectories = {};
+  for (const [coordinate, directory] of Object.entries(
+    raw.ownerDirectories ?? {},
+  )) {
+    const parts = coordinate.toLowerCase().split('/');
+    if (
+      parts.length !== 2 ||
+      !hosts[parts[0]] ||
+      !SAFE_OWNER.test(parts[1]) ||
+      !SAFE_OWNER.test(directory) ||
+      directory.includes('..')
+    )
+      fail('Invalid owner directory mapping.');
+    if (ownerDirectories[coordinate.toLowerCase()])
+      fail('Duplicate owner directory mapping.');
+    ownerDirectories[coordinate.toLowerCase()] = directory;
+  }
+  return {
+    version: 2,
+    sourceRoot,
+    settings,
+    machineName: machineName(raw.machineName),
+    hosts,
+    accounts,
+    routes,
+    repositories,
+    ownerDirectories,
+  };
 }
 
 let cached = null;
@@ -139,9 +276,13 @@ export function loadConfig({ reload = false } = {}) {
     raw = JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch (error) {
     if (error.code === 'ENOENT') {
-      throw new Error(`Workspace configuration not found at ${file}. Run the setup-local-source-code skill to create it.`);
+      throw new Error(
+        `Workspace configuration not found at ${file}. Run the setup-local-source-code skill to create it.`,
+      );
     }
-    throw new Error(`Cannot read workspace configuration at ${file}: ${error.message}`);
+    throw new Error(
+      `Cannot read workspace configuration at ${file}: ${error.message}`,
+    );
   }
   cached = normalizeConfig(raw);
   return cached;
@@ -149,9 +290,12 @@ export function loadConfig({ reload = false } = {}) {
 
 /** Workspace root from the configuration, or ~/Source when no configuration exists yet. */
 export function configuredSourceRoot() {
-  try { return loadConfig().sourceRoot; }
-  catch (error) {
-    if (/not found/.test(error.message)) return '~/Source';
+  try {
+    return (
+      JSON.parse(fs.readFileSync(configPath(), 'utf8')).sourceRoot ?? '~/Source'
+    );
+  } catch (error) {
+    if (error.code === 'ENOENT') return '~/Source';
     throw error;
   }
 }
@@ -163,9 +307,15 @@ export function isConfiguredHost(host) {
 
 /** Settings for one configured host; throws for an unconfigured host. */
 export function hostConfig(host) {
-  const key = String(host).toLowerCase();
+  const names = Object.keys(loadConfig().hosts);
+  if (!host && names.length !== 1)
+    throw new Error('Supply --host when the host is ambiguous.');
+  const key = String(host ?? names[0]).toLowerCase();
   const entry = loadConfig().hosts[key];
-  if (!entry) throw new Error(`Unconfigured Git host: ${host}. Add it to ${configPath()} through the setup-local-source-code skill.`);
+  if (!entry)
+    throw new Error(
+      `Unconfigured Git host: ${host}. Add it to ${configPath()} through the setup-local-source-code skill.`,
+    );
   return { host: key, ...entry };
 }
 
@@ -173,7 +323,10 @@ export function hostConfig(host) {
 export function identityFor(accountId) {
   const config = loadConfig();
   const account = config.accounts[accountId];
-  if (!account) throw new Error(`Unknown account: ${accountId}. Configured accounts: ${Object.keys(config.accounts).join(', ')}.`);
+  if (!account)
+    throw new Error(
+      `Unknown account: ${accountId}. Configured accounts: ${Object.keys(config.accounts).join(', ')}.`,
+    );
   const host = hostConfig(account.host);
   return {
     id: accountId,
@@ -182,8 +335,9 @@ export function identityFor(accountId) {
     host: host.host,
     sshPort: host.sshPort,
     login: account.login,
-    ghUser: host.provider === 'github' ? account.login : undefined,
-    forgejoUser: host.provider === 'forgejo' ? account.login : undefined,
+    sshUser: host.sshUser,
+    sshHostname: host.sshHostname,
+    tokenFile: account.tokenFile,
     gitUserName: account.gitName,
     gitUserEmail: account.gitEmail,
     sshHost: account.sshHost,
@@ -197,27 +351,33 @@ export function listIdentities(host) {
   const config = loadConfig();
   return Object.keys(config.accounts)
     .map(identityFor)
-    .filter(identity => !host || identity.host === String(host).toLowerCase());
+    .filter(
+      (identity) => !host || identity.host === String(host).toLowerCase(),
+    );
 }
 
 /** The routed identity for an owner, or null when the owner has no route. */
-export function findIdentity(owner, host = DEFAULT_HOST) {
-  const { host: key } = hostConfig(host);
-  const accountId = loadConfig().routes[key][String(owner).toLowerCase()];
-  return accountId ? identityFor(accountId) : null;
+export function findIdentity(owner, host, repository) {
+  const config = loadConfig();
+  const candidates = Object.keys(config.hosts)
+    .filter((h) => !host || h === String(host).toLowerCase())
+    .flatMap((h) => {
+      const account =
+        (repository &&
+          config.repositories[`${h}/${owner}/${repository}`.toLowerCase()]) ??
+        config.routes[h]?.[String(owner).toLowerCase()];
+      return account ? [identityFor(account)] : [];
+    });
+  if (candidates.length > 1)
+    throw new Error(`Ambiguous host for ${owner}; supply --host.`);
+  return candidates[0] ?? null;
 }
 
-/** The routed identity for an owner; throws with the fix when the owner has no route. */
-export function resolveIdentity(owner, host = DEFAULT_HOST) {
-  const identity = findIdentity(owner, host);
+export function resolveIdentity(owner, host, repository) {
+  const identity = findIdentity(owner, host, repository);
   if (identity) return identity;
-  const key = String(host).toLowerCase();
-  const candidates = listIdentities(key).map(entry => entry.id);
-  const hostFlag = key === DEFAULT_HOST ? '' : ` --host ${key}`;
   throw new Error(
-    `No route for owner "${owner}" on ${key}; routing never guesses an account.\n` +
-      `Add one with: wt-route.mjs add ${owner} {account}${hostFlag}\n` +
-      `Accounts on ${key}: ${candidates.join(', ') || 'none configured'}.`
+    `No route for owner "${owner}"${host ? ` on ${host}` : ''}; add one with wt-route.mjs add ${owner} {account} --host {host}.`,
   );
 }
 
