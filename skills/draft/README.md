@@ -1,6 +1,6 @@
 # Draft Skills
 
-Skills in this level are still in development and are not ready for general
+Skills in this channel are still in development and are not ready for general
 use.
 
 ## `zulip-admin`

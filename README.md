@@ -1,8 +1,9 @@
 # Skills
 
 Public, reusable agent skills maintained by Fred Lackey. Each skill is a
-self-contained package stored under a level that communicates its origin or
-current maturity.
+self-contained package stored under a release channel that communicates its
+current maturity. The `imported` channel is the one exception: it groups skills
+by origin rather than maturity.
 
 ## Why This Exists
 
@@ -29,7 +30,7 @@ and connects supported harnesses to that source without per-harness copies.
 - [`skills/imported/`](skills/imported/) contains skills from external sources.
 - [`skills/legacy/`](skills/legacy/) contains retired or older skills, including ones recovered from elsewhere.
 
-Each level has a `README.md` describing the skills currently within it. Every
+Each channel has a `README.md` describing the skills currently within it. Every
 skill directory contains a required `SKILL.md` and all resources the skill
 needs to function independently of this repository.
 
