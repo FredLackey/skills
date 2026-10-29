@@ -42,7 +42,7 @@ cloning or choosing a link target. It includes the needed conventions from
 skill's identity interview or workstation setup.
 
 1. Identify the requested repository, exact skill folder, and requested revision
-   or release level. Reuse evidence from the request and local workspace. Do not
+   or release channel. Reuse evidence from the request and local workspace. Do not
    assume every repository uses `skills/stable/` or promote a draft implicitly.
 2. Inspect applicable workspace instructions, the configured source root, and
    existing clones. Use a durable primary clone at
@@ -153,7 +153,7 @@ first; otherwise report that it is not yet available for shared installation.
 
 Links do not fetch Git updates. If the user pinned a revision, keep it pinned;
 do not sync it forward.
-If a skill moves between release-level folders, resolve its new reviewed path
+If a skill moves between release channel folders, resolve its new reviewed path
 and repair affected registrations while preserving rollback information.
 
 Never edit the primary through an installation link or run an updater there

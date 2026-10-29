@@ -22,7 +22,7 @@ Use the user's configured root; the portable default is `~/Source`:
 For example, a repository can expose
 `repos/example-org/agent-skills/skills/stable/code-review/`. The harness's
 `skills/code-review` entry points to that complete directory. Inspect the
-actual repository layout instead of assuming a level or subdirectory.
+actual repository layout instead of assuming a release channel or subdirectory.
 
 - Read primary clones as installation sources; make repository edits in
   worktrees. Every repository within one task uses the same task branch.

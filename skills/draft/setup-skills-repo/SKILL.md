@@ -1,6 +1,6 @@
 ---
 name: setup-skills-repo
-description: Create or reorganize a repository of portable agent skills using draft, canary, stable, imported, and legacy levels. Only invoke this skill when the user explicitly asks to set up, restructure, or audit a skills repository against this convention by name — never infer it automatically from ordinary skill authoring or editing. Do not use for installing skills into an agent environment.
+description: Create or reorganize a repository of portable agent skills using draft, canary, stable, imported, and legacy release channels. Only invoke this skill when the user explicitly asks to set up, restructure, or audit a skills repository against this convention by name — never infer it automatically from ordinary skill authoring or editing. Do not use for installing skills into an agent environment.
 ---
 
 # Setup Skills Repo
@@ -19,7 +19,7 @@ preserving each skill as a self-contained unit.
 
 Read [references/skill-repo-configuration.md](references/skill-repo-configuration.md)
 before changing a target repository. It defines the directory structure,
-level meanings, README format, portability boundary, and script conventions.
+channel meanings, README format, portability boundary, and script conventions.
 
 ## Workflow
 
@@ -28,18 +28,18 @@ level meanings, README format, portability boundary, and script conventions.
 2. Determine whether the task is a new setup, a structural audit, or a
    migration of existing skills.
 3. For a new or empty repository, create the directory structure defined by
-   the reference and author the root and level README files for that repository.
+   the reference and author the root and channel README files for that repository.
    Treat the reference as guidance, not as a file to copy into the target.
    Do not overwrite existing documentation.
 4. For an existing repository, inventory every skill and all files beneath its
    directory before moving anything. Preserve the entire skill directory when
-   changing its level.
-5. Assign levels from explicit user direction or reliable repository evidence.
+   changing its channel.
+5. Assign channels from explicit user direction or reliable repository evidence.
    Do not guess when a classification would materially change how a skill is
    presented. Unclassified retired or historical skills may be placed in
    `legacy` when that intent is clear.
-6. Update the root README and every affected level README. Each skill entry in
-   a level README must use a subheading, a proper explanation, and a current
+6. Update the root README and every affected channel README. Each skill entry in
+   a channel README must use a subheading, a proper explanation, and a current
    state paragraph; never reduce the catalog to a table or single-line list.
 7. Verify the final structure, relative references, skill self-containment,
    README coverage, and script portability. Run an available skill validator
@@ -59,5 +59,5 @@ level meanings, README format, portability boundary, and script conventions.
 
 ## Completion
 
-Report the resulting repository path, skills by level, validation performed,
+Report the resulting repository path, skills by channel, validation performed,
 remaining decisions or exceptions, and any Git or remote actions taken.

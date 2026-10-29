@@ -24,10 +24,14 @@ repo-root/
 ```
 
 The root `README.md` briefly explains the repository and links to its
-documentation and skill-level indexes. The `docs/` directory contains only
+documentation and channel indexes. The `docs/` directory contains only
 repository-wide documentation and helpful information.
 
-## Skill Levels
+## Release Channels
+
+Each directory under `skills/` is a release channel. A skill's channel
+communicates its current maturity, except for `imported`, which groups skills
+by origin instead.
 
 - `draft` contains skills still in development. They may be incomplete,
   unstable, or subject to significant change.
@@ -55,10 +59,10 @@ repository, or a backup) without ever having gone through that pipeline here.
 Either way, a `legacy` skill does not participate in promotion and is not
 assumed to still work or be maintained.
 
-## Level README Files
+## Channel README Files
 
-Every `skills/{level}` directory contains a `README.md`, even when it contains
-no skills. The README concisely describes the level and catalogs every skill
+Every `skills/{channel}` directory contains a `README.md`, even when it contains
+no skills. The README concisely describes the channel and catalogs every skill
 currently stored there.
 
 Do not use Markdown tables or single-line skill entries. Give each skill its
@@ -77,14 +81,14 @@ cases are still being validated before promotion to stable.
 ```
 
 Keep indexes synchronized whenever a skill is added, removed, renamed, or
-moved between levels.
+moved between channels.
 
 ## Skill Package
 
 Every skill lives at:
 
 ```text
-skills/{level}/{skill-name}/
+skills/{channel}/{skill-name}/
 ├── SKILL.md
 ├── references/            # Optional supporting information
 ├── scripts/               # Optional executable helpers
@@ -93,7 +97,7 @@ skills/{level}/{skill-name}/
 
 A skill must never sit directly under `skills/`; every skill belongs under
 exactly one of `skills/draft`, `skills/canary`, `skills/stable`,
-`skills/imported`, or `skills/legacy`. `skills/{level}/{skill-name}/` is
+`skills/imported`, or `skills/legacy`. `skills/{channel}/{skill-name}/` is
 required, not optional — a skill directory found any other place, including
 loose under `skills/` itself, is a structural violation to fix, not an
 acceptable alternate location.
