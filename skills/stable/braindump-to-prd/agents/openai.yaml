@@ -1,0 +1,6 @@
+interface:
+  display_name: "Braindump to PRD"
+  short_description: "Create product-level requirements and resolve open questions"
+  default_prompt: "Use $braindump-to-prd to create docs/concepts/REQUIREMENTS.md from brain dumps at product-owner altitude, interview me one question at a time through every open question, and then ask whether to proceed with updating the PRD."
+policy:
+  allow_implicit_invocation: false

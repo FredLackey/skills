@@ -1,0 +1,6 @@
+interface:
+  display_name: "Braindump"
+  short_description: "Capture raw thoughts into notes"
+  default_prompt: "Use $braindump to capture the user's raw thoughts into a timestamped markdown file under docs/braindump/."
+policy:
+  allow_implicit_invocation: false

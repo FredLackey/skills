@@ -1,0 +1,6 @@
+interface:
+  display_name: "Braindump Interview (Draft)"
+  short_description: "Answer review questions from suggested choices"
+  default_prompt: "Use $braindump-interview to interview me through unanswered braindump review questions with suggested multiple-choice answers."
+policy:
+  allow_implicit_invocation: false
