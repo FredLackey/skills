@@ -42,8 +42,8 @@ cloning or choosing a link target. It includes the needed conventions from
 skill's identity interview or workstation setup.
 
 1. Identify the requested repository, exact skill folder, and requested revision
-   or release channel. Reuse evidence from the request and local workspace. Do not
-   assume every repository uses `skills/stable/` or promote a draft implicitly.
+   or release channel. Reuse evidence from the request and local workspace. Do
+   not assume every repository uses `skills/stable/` or promote a draft implicitly.
 2. Inspect applicable workspace instructions, the configured source root, and
    existing clones. Use a durable primary clone at
    `<source-root>/repos/<owner>/<repository>` by default, with the configured

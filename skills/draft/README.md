@@ -26,8 +26,9 @@ See [Zulip User](zulip-user/SKILL.md).
 ## `setup-skills-repo`
 
 Creates or reorganizes a portable skills repository using draft, canary,
-stable, imported, and legacy release channels. It carries the complete public convention
-and guides an agent through applying it without relying on external material.
+stable, imported, and legacy release channels. It carries the complete public
+convention and guides an agent through applying it without relying on external
+material.
 
 **Current state:** Initial draft derived from the skill repository standard.
 Its structure and workflow are being validated before canary promotion.
